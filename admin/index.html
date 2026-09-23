@@ -498,10 +498,16 @@
     }
   }
 
+  // 학생 웹 주소 — QR을 이 링크로 감싸서, 가입 전인 학생이 일반 카메라 앱으로 찍어도
+  // 학생 웹으로 넘어가 로그인/가입까지 이어서 하고, 끝나자마자 자동으로 이 QR로 출석
+  // 처리되도록 한다(학생 웹 index.html의 consumePendingScanIfAny 참고).
+  const STUDENT_WEB_URL = 'https://knadlg1.github.io/ce/';
+
   function drawQr(payload) {
     const container = document.getElementById('qr-canvas');
     container.innerHTML = '';
-    new QRCode(container, { text: payload, width: 440, height: 440, correctLevel: QRCode.CorrectLevel.M });
+    const url = STUDENT_WEB_URL + '?scan=' + encodeURIComponent(payload);
+    new QRCode(container, { text: url, width: 440, height: 440, correctLevel: QRCode.CorrectLevel.M });
   }
 
   function currentQrLabel(period, isFinal) {

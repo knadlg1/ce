@@ -129,6 +129,7 @@
       });
       studentName = name;
       enterMain();
+      await consumePendingScanIfAny();
     } catch (e) {
       errEl.textContent = '가입 실패: ' + e.message;
       errEl.hidden = false;
@@ -142,14 +143,40 @@
       studentName = snap.data().name || '';
       restoreSessionIdIfToday();
       enterMain();
+      await consumePendingScanIfAny();
     } catch (e) {
       showLoginScreen('학생 정보를 불러오지 못했습니다.');
     }
   }
 
+  // 관리자가 보여주는 QR이 이제 순수 텍스트(JSON)가 아니라 이 페이지 링크(?scan=...)라서,
+  // 가입 전인 학생이 일반 카메라 앱으로 그 QR을 찍어도 이 페이지로 넘어온다. 로그인/가입이
+  // 안 끝난 상태로 열렸을 수 있으니, 그 scan 값을 sessionStorage에 저장해두고 로그인(카카오
+  // 리다이렉트 왕복 포함)/가입이 끝나자마자 자동으로 출석 처리까지 이어서 한다 —
+  // sessionStorage는 카카오 로그인 페이지로 나갔다 돌아와도(같은 탭) 그대로 남아있다.
+  async function consumePendingScanIfAny() {
+    const pending = sessionStorage.getItem('ce_pending_scan');
+    if (!pending) return;
+    sessionStorage.removeItem('ce_pending_scan');
+    await handleScanResult(extractScanPayload(pending));
+  }
+
+  // QR 이미지에 인코딩된 텍스트가 URL(?scan=...)이면 그 안의 실제 체크인 payload만 꺼내고,
+  // URL이 아니면(옛 형식/직접 테스트 등) 그대로 payload로 취급한다.
+  function extractScanPayload(text) {
+    try {
+      const u = new URL(text);
+      const p = u.searchParams.get('scan');
+      if (p) return p;
+    } catch {}
+    return text;
+  }
+
   async function boot() {
     await ensureAnonymousAuth();
     const urlParams = new URLSearchParams(window.location.search);
+    const scanParam = urlParams.get('scan');
+    if (scanParam) sessionStorage.setItem('ce_pending_scan', scanParam);
     const code = urlParams.get('code');
     if (code) {
       // 뒤로가기/새로고침 시 이 code를 재사용하지 않도록 URL을 즉시 정리한다.
@@ -171,6 +198,7 @@
         return;
       }
     } else {
+      if (scanParam) window.history.replaceState({}, '', window.location.pathname);
       const saved = localStorage.getItem('ce_kakao_id');
       if (saved) kakaoId = saved;
     }
@@ -219,7 +247,7 @@
         if (code && code.data && !scanLocked) {
           scanLocked = true;
           closeScanner();
-          handleScanResult(code.data);
+          handleScanResult(extractScanPayload(code.data));
           return;
         }
       }
