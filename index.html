@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>연수교육 QR 인증</title>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+  import { getFirestore, doc, getDoc, setDoc, collection, query, where, orderBy, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+  // 학생 웹 — mobile-app의 QrMainScreen.js/qrAttendance.js/SimpleSignatureModal.js가 검증한
+  // UX 흐름(스캔→시작서명 강제→체크인목록→종료서명 강제→구제요청 배너)만 개념으로 가져와
+  // 순수 HTML/JS로 새로 작성했다(React Native 코드를 그대로 옮기지 않음). 위치(GPS) 권한/
+  // 로직은 이 서비스에 전혀 필요 없어 일절 넣지 않았다.
+
+  const FUNC_URL = 'https://us-central1-yeonsu-qr-auth.cloudfunctions.net';
+  const KAKAO_REST_KEY = 'ca34b3c2a0cf2d0fe87d9f18b39aa8d8';
+
+  const app = initializeApp({
+    projectId: "yeonsu-qr-auth",
+    appId: "1:1001009945495:web:9f99c789e6d13404a442d2",
+    storageBucket: "yeonsu-qr-auth.firebasestorage.app",
+    apiKey: "AIzaSyA68rFB5yLol3v9acbwRIFPtDdX2hf2FQw",
+    authDomain: "yeonsu-qr-auth.firebaseapp.com",
+    messagingSenderId: "1001009945495",
+  });
+  const db = getFirestore(app);
+  const auth = getAuth(app);
+
+  // ── 상태 ──
+  let kakaoId = null;
+  let studentName = '';
+  // 방금 스캔한 QR의 세션 id(payload의 s) — 오늘 날짜 안에서는 새로고침/재방문에도
+  // localStorage로 남겨 체크인목록/서명요청/시간표 조회에 계속 쓴다(스캔을 매번
+  // 다시 안 해도 되게). 날짜가 바뀌면 무시하고 다시 스캔할 때까지 null로 둔다.
+  let currentSessionId = null;
+  let rosterStatus = null; // sessions/{sid}/roster/{kakaoId} — 시작/종료 서명 상태
+  let makeupRequest = null; // 이 학생의 pending 서명요청 1건(가장 오래된 것)
+  let checkins = [];
+
+  function todayKST() {
+    return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function ensureAnonymousAuth() {
+    // Firestore 클라이언트 접근용(보안규칙: request.auth != null) — 카카오 로그인과는
+    // 별개로 필요하다(qr-admin/mobile-app과 동일 패턴).
+    return new Promise((resolve) => {
+      if (auth.currentUser) { resolve(); return; }
+      signInAnonymously(auth).then(() => resolve()).catch((e) => { console.warn('익명 로그인 실패:', e); resolve(); });
+    });
+  }
+
+  function setCurrentSessionId(sid) {
+    currentSessionId = sid;
+    localStorage.setItem('ce_session_id', sid);
+    localStorage.setItem('ce_session_date', todayKST());
+  }
+
+  function restoreSessionIdIfToday() {
+    const savedDate = localStorage.getItem('ce_session_date');
+    const savedSid = localStorage.getItem('ce_session_id');
+    if (savedSid && savedDate === todayKST()) currentSessionId = savedSid;
+  }
+
+  // ── 화면 전환 ──
+  function showLoginScreen(msg) {
+    document.getElementById('registration-screen').hidden = true;
+    document.getElementById('main-screen').hidden = true;
+    document.getElementById('login-screen').hidden = false;
+    const errEl = document.getElementById('login-error');
+    if (msg) { errEl.textContent = msg; errEl.hidden = false; } else { errEl.hidden = true; }
+  }
+
+  function showRegistration() {
+    document.getElementById('login-screen').hidden = true;
+    document.getElementById('main-screen').hidden = true;
+    document.getElementById('registration-screen').hidden = false;
+  }
+
+  function enterMain() {
+    document.getElementById('login-screen').hidden = true;
+    document.getElementById('registration-screen').hidden = true;
+    document.getElementById('main-screen').hidden = false;
+    document.getElementById('student-name-label').textContent = studentName || '학생';
+    loadCheckins();
+    loadRosterStatus();
+    loadMakeupRequests();
+    loadSchedule();
+  }
+
+  // ── 카카오 로그인 ──
+  window.doKakaoLogin = function () {
+    const redirectUri = window.location.origin + window.location.pathname;
+    const url = `https://kauth.kakao.com/oauth/authorize?client_id=${KAKAO_REST_KEY}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
+    window.location.href = url;
+  };
+
+  window.doLogout = function () {
+    localStorage.removeItem('ce_kakao_id');
+    localStorage.removeItem('ce_kakao_nickname');
+    localStorage.removeItem('ce_session_id');
+    localStorage.removeItem('ce_session_date');
+    kakaoId = null;
+    studentName = '';
+    currentSessionId = null;
+    showLoginScreen();
+  };
+
+  window.submitRegistration = async function () {
+    const name = document.getElementById('reg-name').value.trim();
+    const phone = document.getElementById('reg-phone').value.trim();
+    const errEl = document.getElementById('reg-error');
+    errEl.hidden = true;
+    if (!name || !phone) {
+      errEl.textContent = '이름과 전화번호를 입력해주세요.';
+      errEl.hidden = false;
+      return;
+    }
+    try {
+      await setDoc(doc(db, 'students', String(kakaoId)), {
+        kakaoId: String(kakaoId), name, phone, registeredAt: serverTimestamp(),
+      });
+      studentName = name;
+      enterMain();
+    } catch (e) {
+      errEl.textContent = '가입 실패: ' + e.message;
+      errEl.hidden = false;
+    }
+  };
+
+  async function afterKakaoLogin() {
+    try {
+      const snap = await getDoc(doc(db, 'students', String(kakaoId)));
+      if (!snap.exists()) { showRegistration(); return; }
+      studentName = snap.data().name || '';
+      restoreSessionIdIfToday();
+      enterMain();
+    } catch (e) {
+      showLoginScreen('학생 정보를 불러오지 못했습니다.');
+    }
+  }
+
+  async function boot() {
+    await ensureAnonymousAuth();
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    if (code) {
+      // 뒤로가기/새로고침 시 이 code를 재사용하지 않도록 URL을 즉시 정리한다.
+      window.history.replaceState({}, '', window.location.pathname);
+      try {
+        const redirectUri = window.location.origin + window.location.pathname;
+        const res = await fetch(`${FUNC_URL}/kakaoLogin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, redirect_uri: redirectUri }),
+        });
+        const data = await res.json();
+        if (!data.kakaoId) { showLoginScreen(data.message || '카카오 로그인에 실패했습니다.'); return; }
+        kakaoId = data.kakaoId;
+        localStorage.setItem('ce_kakao_id', String(kakaoId));
+        localStorage.setItem('ce_kakao_nickname', data.nickname || '');
+      } catch (e) {
+        showLoginScreen('로그인 처리 중 오류가 발생했습니다.');
+        return;
+      }
+    } else {
+      const saved = localStorage.getItem('ce_kakao_id');
+      if (saved) kakaoId = saved;
+    }
+    if (!kakaoId) { showLoginScreen(); return; }
+    await afterKakaoLogin();
+  }
+
+  // ── QR 스캔 ──
+  let scanStream = null;
+  let scanRafId = null;
+  let scanLocked = false;
+
+  window.openScanner = async function () {
+    document.getElementById('scan-overlay').hidden = false;
+    scanLocked = false;
+    try {
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      const video = document.getElementById('qr-video');
+      video.srcObject = scanStream;
+      await video.play();
+      scanLoop();
+    } catch (e) {
+      showToast('카메라를 열 수 없습니다: ' + e.message, 'error');
+      closeScanner();
+    }
+  };
+
+  window.closeScanner = function () {
+    document.getElementById('scan-overlay').hidden = true;
+    if (scanRafId) { cancelAnimationFrame(scanRafId); scanRafId = null; }
+    if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+  };
+
+  function scanLoop() {
+    const video = document.getElementById('qr-video');
+    const canvas = document.getElementById('qr-canvas-hidden');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    function tick() {
+      if (!scanStream) return;
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        if (code && code.data && !scanLocked) {
+          scanLocked = true;
+          closeScanner();
+          handleScanResult(code.data);
+          return;
+        }
+      }
+      scanRafId = requestAnimationFrame(tick);
+    }
+    scanRafId = requestAnimationFrame(tick);
+  }
+
+  async function handleScanResult(payload) {
+    showLoading(true);
+    try {
+      const res = await fetch(`${FUNC_URL}/checkQrPeriod`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kakaoId: String(kakaoId), name: studentName, payload }),
+      });
+      const data = await res.json();
+      // 성공/실패(duplicate 포함) 공통 — QR payload의 세션 id는 어느 쪽이든 최신 상태를
+      // 다시 가져오는 데 필요하다(mobile-app QrMainScreen.js와 동일한 이유).
+      let sid = null;
+      try { const parsed = JSON.parse(payload); if (parsed && parsed.s) sid = parsed.s; } catch {}
+      if (sid) setCurrentSessionId(sid);
+
+      if (data.success) {
+        let msg = '출석 체크 완료!';
+        try { const parsed = JSON.parse(payload); if (parsed && parsed.p) msg = `✅ ${parsed.p}교시 출석 체크 완료!`; } catch {}
+        showToast(msg, 'success');
+        await loadCheckins();
+        await loadRosterStatus();
+        await loadSchedule();
+      } else {
+        showToast(data.message || '출석 체크에 실패했습니다.', 'error');
+        await loadRosterStatus();
+      }
+    } catch (e) {
+      showToast('네트워크 오류가 발생했습니다.', 'error');
+    } finally {
+      showLoading(false);
+      scanLocked = false;
+    }
+  }
+
+  // ── 체크인 목록 ──
+  function fmtCheckedAt(ts) {
+    try {
+      const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts);
+      if (isNaN(d.getTime())) return '-';
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      return `${hh}:${mm}`;
+    } catch { return '-'; }
+  }
+
+  async function loadCheckins() {
+    if (!currentSessionId) { checkins = []; renderCheckins(); return; }
+    try {
+      const q = query(
+        collection(db, 'sessions', currentSessionId, 'checkins'),
+        where('kakaoId', '==', String(kakaoId)),
+        orderBy('period', 'asc')
+      );
+      const snap = await getDocs(q);
+      checkins = snap.docs.map(d => d.data());
+      renderCheckins();
+    } catch (e) {
+      console.warn('체크인 조회 실패:', e);
+    }
+  }
+
+  function renderCheckins() {
+    const el = document.getElementById('checkin-list');
+    if (!checkins.length) { el.innerHTML = '<div class="empty-text">아직 체크한 교시가 없습니다.</div>'; return; }
+    el.innerHTML = checkins.map(c => `
+      <div class="checkin-item">
+        <span class="checkin-period">${c.period}교시</span>
+        <span class="checkin-time">${fmtCheckedAt(c.checkedAt)}${c.makeupApproved ? ' (서명출석)' : ''}</span>
+      </div>
+    `).join('');
+  }
+
+  // ── 시작/종료 서명(스킵 불가) + 구제요청 서명(취소 가능) — 공용 서명 모달 ──
+  let sigCtx = null;
+  let sigDrawing = false;
+  let sigHasContent = false;
+  let sigModalKind = null; // 'start' | 'end' | 'makeup'
+
+  function initSignatureCanvas() {
+    const canvas = document.getElementById('sig-canvas');
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * ratio;
+    canvas.height = canvas.clientHeight * ratio;
+    sigCtx = canvas.getContext('2d');
+    sigCtx.scale(ratio, ratio);
+    sigCtx.lineWidth = 2.5;
+    sigCtx.lineCap = 'round';
+    sigCtx.strokeStyle = '#1a1a2e';
+    sigHasContent = false;
+  }
+
+  function sigPos(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches && e.touches.length ? e.touches[0] : e;
+    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  }
+
+  function attachSignatureEvents() {
+    const canvas = document.getElementById('sig-canvas');
+    function start(e) { e.preventDefault(); sigDrawing = true; const p = sigPos(e, canvas); sigCtx.beginPath(); sigCtx.moveTo(p.x, p.y); }
+    function move(e) { if (!sigDrawing) return; e.preventDefault(); const p = sigPos(e, canvas); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); sigHasContent = true; }
+    function end() { sigDrawing = false; }
+    canvas.addEventListener('mousedown', start);
+    canvas.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    canvas.addEventListener('touchstart', start, { passive: false });
+    canvas.addEventListener('touchmove', move, { passive: false });
+    canvas.addEventListener('touchend', end);
+  }
+  attachSignatureEvents();
+
+  window.clearSignature = function () {
+    if (!sigCtx) return;
+    const canvas = document.getElementById('sig-canvas');
+    sigCtx.clearRect(0, 0, canvas.width, canvas.height);
+    sigHasContent = false;
+  };
+
+  // 시작/종료 서명은 onClose 없이(스킵 불가), 구제요청 서명은 onClose를 넘겨서
+  // "나중에 하기" 버튼이 뜬다 — mobile-app SimpleSignatureModal.js와 동일한 규칙.
+  function openSignatureModal(kind, title, cancelable) {
+    sigModalKind = kind;
+    document.getElementById('sig-title').textContent = title;
+    document.getElementById('sig-error').hidden = true;
+    document.getElementById('sig-later-btn').hidden = !cancelable;
+    document.getElementById('sig-modal').hidden = false;
+    requestAnimationFrame(initSignatureCanvas);
+  }
+
+  window.closeSignatureModal = function () {
+    document.getElementById('sig-modal').hidden = true;
+    sigModalKind = null;
+  };
+
+  window.submitSignatureModal = async function () {
+    const errEl = document.getElementById('sig-error');
+    if (!sigHasContent) { errEl.textContent = '서명을 먼저 그려주세요.'; errEl.hidden = false; return; }
+    const btn = document.getElementById('sig-submit-btn');
+    btn.disabled = true;
+    const base64 = document.getElementById('sig-canvas').toDataURL('image/png').split(',')[1];
+    try {
+      if (sigModalKind === 'start' || sigModalKind === 'end') {
+        const res = await fetch(`${FUNC_URL}/saveQrSignature`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kakaoId: String(kakaoId), sessionId: currentSessionId, type: sigModalKind, signature: base64 }),
+        }).then(r => r.json());
+        if (!res.success) throw new Error(res.message || '저장 실패');
+        showToast(sigModalKind === 'start' ? '시작 서명 완료 ✓' : '종료 서명 완료 ✓', 'success');
+        document.getElementById('sig-modal').hidden = true;
+        sigModalKind = null;
+        await loadRosterStatus();
+      } else if (sigModalKind === 'makeup') {
+        const res = await fetch(`${FUNC_URL}/submitMakeupRequest`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kakaoId: String(kakaoId), sessionId: currentSessionId, period: makeupRequest.period, signature: base64 }),
+        }).then(r => r.json());
+        if (!res.success) throw new Error(res.message || '제출 실패');
+        makeupRequest = null;
+        renderMakeupBanner();
+        document.getElementById('sig-modal').hidden = true;
+        sigModalKind = null;
+        showToast('제출 완료! 관리자 승인을 기다려주세요.', 'success');
+      }
+    } catch (e) {
+      errEl.textContent = '저장 실패: ' + e.message;
+      errEl.hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  async function loadRosterStatus() {
+    if (!currentSessionId) { rosterStatus = null; return; }
+    try {
+      const snap = await getDoc(doc(db, 'sessions', currentSessionId, 'roster', String(kakaoId)));
+      rosterStatus = snap.exists() ? snap.data() : null;
+      checkAutoSignature();
+    } catch (e) {
+      console.warn('서명 상태 조회 실패:', e);
+    }
+  }
+
+  // 미완료 서명 자동 오픈 — rosterStatus(서버 상태)만 기준으로 삼는다. 방금 스캔했든,
+  // 서명 전에 페이지를 나갔다가 다시 돌아왔든 동일하게 반응한다(QrMainScreen.js의
+  // "미완료 서명 자동 오픈" effect와 같은 규칙).
+  function checkAutoSignature() {
+    if (!document.getElementById('sig-modal').hidden) return; // 이미 모달 떠 있음
+    if (!rosterStatus) return;
+    if (rosterStatus.startScannedAt && !rosterStatus.startSignedAt) {
+      openSignatureModal('start', '시작 서명', false);
+    } else if (rosterStatus.endScannedAt && !rosterStatus.endSignedAt) {
+      openSignatureModal('end', '종료 서명', false);
+    }
+  }
+
+  // ── 구제요청(서명출석) 배너 ──
+  async function loadMakeupRequests() {
+    if (!currentSessionId) { makeupRequest = null; renderMakeupBanner(); return; }
+    try {
+      const q = query(
+        collection(db, 'sessions', currentSessionId, 'makeupRequests'),
+        where('kakaoId', '==', String(kakaoId)),
+        where('status', '==', 'pending')
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      makeupRequest = list[0] || null;
+      renderMakeupBanner();
+    } catch (e) {
+      console.warn('서명요청 조회 실패:', e);
+    }
+  }
+
+  function renderMakeupBanner() {
+    const el = document.getElementById('makeup-banner');
+    if (!makeupRequest) { el.hidden = true; return; }
+    el.hidden = false;
+    document.getElementById('makeup-banner-text').textContent =
+      `${makeupRequest.period}교시 출석 서명요청이 도착했어요. 탭해서 서명해주세요`;
+  }
+
+  window.openMakeupSignature = function () {
+    if (!makeupRequest) return;
+    openSignatureModal('makeup', '서명출석', true);
+  };
+
+  // ── 오늘의 시간표(참고 표시 전용) ──
+  async function loadSchedule() {
+    if (!currentSessionId) { renderSchedule(null); return; }
+    try {
+      const sessSnap = await getDoc(doc(db, 'sessions', currentSessionId));
+      if (!sessSnap.exists()) { renderSchedule(null); return; }
+      const { orgId, date } = sessSnap.data();
+      if (!orgId || !date) { renderSchedule(null); return; }
+      const schedSnap = await getDoc(doc(db, 'schedule', `${orgId}_${date}`));
+      renderSchedule(schedSnap.exists() ? (schedSnap.data().courses || []) : null);
+    } catch (e) {
+      console.warn('시간표 조회 실패:', e);
+      renderSchedule(null);
+    }
+  }
+
+  function renderSchedule(courses) {
+    const el = document.getElementById('schedule-card-body');
+    if (!courses || !courses.length) { el.innerHTML = '<div class="empty-text">참고용 시간표가 없습니다.</div>'; return; }
+    el.innerHTML = courses.map(c => `
+      <div class="schedule-row">
+        <span class="schedule-time">${escapeHtml(c.time || '')}</span>
+        <div class="schedule-info">
+          <div class="schedule-title">${escapeHtml(c.title || '')}</div>
+          <div class="schedule-sub">${escapeHtml(c.instructor || '')}${c.affiliation ? ' · ' + escapeHtml(c.affiliation) : ''}</div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ── 토스트/로딩 ──
+  let toastTimer = null;
+  function showToast(message, type) {
+    const el = document.getElementById('toast');
+    el.textContent = message;
+    el.className = 'toast toast-' + (type || 'info');
+    el.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 2500);
+  }
+
+  function showLoading(v) {
+    document.getElementById('loading-overlay').hidden = !v;
+  }
+
+  boot();
+</script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --brand: #6c63ff;
+  --brand-dark: #5651d5;
+  --brand-xlight: #ede9fe;
+  --canvas: #f4f5f7;
+  --surface: #FFFFFF;
+  --border: #E5E7EB;
+  --text: #111827;
+  --muted: #6B7280;
+  --pill: 50px;
+  --shadow: 0 1px 4px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.04);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);color:var(--text);letter-spacing:-0.01em;min-height:100vh;}
+[hidden]{display:none!important;}
+
+.screen{min-height:100vh;}
+#login-screen,#registration-screen{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);display:flex;align-items:center;justify-content:center;padding:24px;}
+
+.auth-card{background:var(--surface);border-radius:20px;padding:40px 32px;width:100%;max-width:380px;box-shadow:0 24px 64px rgba(0,0,0,0.3);}
+.auth-logo{text-align:center;margin-bottom:28px;}
+.auth-logo-mark{width:64px;height:64px;background:var(--brand);border-radius:18px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff;margin:0 auto 14px;}
+.auth-logo-title{font-size:22px;font-weight:800;color:var(--text);margin-top:8px;letter-spacing:-0.02em;}
+.auth-logo-sub{font-size:13px;color:var(--muted);margin-top:4px;}
+.auth-form-label{font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:6px;letter-spacing:0.06em;text-transform:uppercase;}
+.auth-input{width:100%;padding:13px 16px;border:1.5px solid var(--border);border-radius:10px;font-size:15px;color:var(--text);outline:none;margin-bottom:14px;background:#fff;}
+.auth-input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(108,99,255,.12);}
+.auth-btn{width:100%;padding:15px;border-radius:var(--pill);border:none;font-size:15px;font-weight:700;cursor:pointer;}
+.auth-btn-primary{background:var(--brand);color:#fff;}
+.auth-btn-primary:hover{background:var(--brand-dark);}
+.auth-error{background:#FEF2F2;color:#B91C1C;border:1px solid #FECACA;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:14px;}
+.kakao-btn{width:100%;padding:15px;border-radius:var(--pill);border:none;font-size:15px;font-weight:700;cursor:pointer;background:#FEE500;color:#191600;}
+
+/* ── 메인 화면 ── */
+#main-screen{display:flex;flex-direction:column;min-height:100vh;padding-bottom:24px;}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);}
+.topbar-title{font-size:17px;font-weight:800;color:var(--brand);}
+.btn-logout{background:transparent;border:1.5px solid var(--border);color:var(--muted);padding:7px 14px;border-radius:var(--pill);cursor:pointer;font-size:12px;font-weight:600;}
+
+.makeup-banner{margin:14px 16px 0;background:#fef3c7;border:1px solid #fcd34d;border-radius:14px;padding:14px;cursor:pointer;}
+.makeup-banner span{font-size:13px;font-weight:700;color:#92400e;display:block;text-align:center;}
+
+.card{background:var(--surface);margin:14px 16px 0;border-radius:14px;padding:16px;box-shadow:var(--shadow);}
+.card-title{font-size:15px;font-weight:800;color:var(--brand);margin-bottom:12px;}
+.qr-scan-card{display:flex;justify-content:center;}
+.qr-scan-btn{background:var(--brand);color:#fff;border:none;padding:16px 40px;border-radius:var(--pill);font-size:16px;font-weight:800;cursor:pointer;width:100%;}
+.qr-scan-btn:hover{background:var(--brand-dark);}
+
+.empty-text{font-size:13px;color:var(--muted);}
+.checkin-item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--canvas);font-size:14px;}
+.checkin-item:last-child{border-bottom:none;}
+.checkin-period{font-weight:700;color:var(--text);}
+.checkin-time{color:var(--muted);font-size:13px;}
+
+.schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--canvas);}
+.schedule-row:last-child{border-bottom:none;}
+.schedule-time{flex-shrink:0;width:82px;font-size:12px;font-weight:700;color:var(--brand);}
+.schedule-title{font-size:13px;font-weight:700;color:var(--text);}
+.schedule-sub{font-size:12px;color:var(--muted);margin-top:2px;}
+
+/* ── QR 스캔 오버레이 ── */
+.scan-overlay{position:fixed;inset:0;background:#000;z-index:200;display:flex;flex-direction:column;}
+#qr-video{flex:1;width:100%;object-fit:cover;}
+.scan-close-btn{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.25);color:#fff;border:none;border-radius:var(--pill);padding:12px 32px;font-size:14px;font-weight:700;cursor:pointer;}
+
+/* ── 서명 모달 ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:flex-end;justify-content:center;z-index:300;}
+.sig-card{background:#fff;width:100%;max-width:480px;border-top-left-radius:24px;border-top-right-radius:24px;padding:20px;padding-bottom:32px;}
+.sig-handle{width:36px;height:4px;background:#e5e7eb;border-radius:2px;margin:0 auto 14px;}
+.sig-title{font-size:17px;font-weight:800;color:#1a1a2e;text-align:center;}
+.sig-subtitle{font-size:12px;color:#94a3b8;text-align:center;margin-top:4px;margin-bottom:14px;}
+.sig-pad-wrap{position:relative;height:220px;border:1.5px solid #c4b5fd;border-radius:12px;overflow:hidden;background:#fafaff;}
+#sig-canvas{width:100%;height:100%;touch-action:none;display:block;}
+.sig-btn-row{display:flex;gap:10px;margin-top:14px;}
+.sig-clear-btn{background:#f1f5f9;color:#374151;border:none;border-radius:12px;padding:14px 18px;font-size:14px;font-weight:700;cursor:pointer;}
+.sig-submit-btn{flex:1;}
+.sig-later-btn{display:block;width:100%;background:none;border:none;color:#94a3b8;font-size:13px;font-weight:600;text-align:center;margin-top:12px;text-decoration:underline;cursor:pointer;}
+
+.loading-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:400;}
+.loading-box{background:#fff;border-radius:16px;padding:24px 32px;font-size:14px;font-weight:700;color:#334155;}
+
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#111827;color:#fff;padding:12px 20px;border-radius:var(--pill);font-size:13px;font-weight:600;z-index:500;max-width:88vw;text-align:center;}
+.toast-error{background:#B91C1C;}
+.toast-success{background:#16a34a;}
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="auth-logo-mark">연</div>
+      <div class="auth-logo-title">연수교육 QR 인증</div>
+      <div class="auth-logo-sub">학생 로그인</div>
+    </div>
+    <div class="auth-error" id="login-error" hidden></div>
+    <button class="kakao-btn" onclick="doKakaoLogin()">카카오로 로그인</button>
+  </div>
+</div>
+
+<div id="registration-screen" class="screen" hidden>
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="auth-logo-mark">연</div>
+      <div class="auth-logo-title">회원가입</div>
+      <div class="auth-logo-sub">이름과 전화번호만 입력하면 돼요</div>
+    </div>
+    <div class="auth-error" id="reg-error" hidden></div>
+    <label class="auth-form-label">이름</label>
+    <input class="auth-input" id="reg-name" type="text" placeholder="이름">
+    <label class="auth-form-label">전화번호</label>
+    <input class="auth-input" id="reg-phone" type="tel" placeholder="01012345678">
+    <button class="auth-btn auth-btn-primary" onclick="submitRegistration()">가입 완료</button>
+  </div>
+</div>
+
+<div id="main-screen" class="screen" hidden>
+  <div class="topbar">
+    <div class="topbar-title" id="student-name-label"></div>
+    <button class="btn-logout" onclick="doLogout()">로그아웃</button>
+  </div>
+
+  <div id="makeup-banner" class="makeup-banner" hidden onclick="openMakeupSignature()">
+    <span id="makeup-banner-text"></span>
+  </div>
+
+  <div class="card qr-scan-card">
+    <button class="qr-scan-btn" onclick="openScanner()">📷 QR 스캔</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">출석현황</div>
+    <div id="checkin-list"><div class="empty-text">아직 체크한 교시가 없습니다.</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">오늘의 시간표</div>
+    <div id="schedule-card-body"><div class="empty-text">참고용 시간표가 없습니다.</div></div>
+  </div>
+</div>
+
+<div id="scan-overlay" class="scan-overlay" hidden>
+  <video id="qr-video" playsinline autoplay muted></video>
+  <canvas id="qr-canvas-hidden" hidden></canvas>
+  <button class="scan-close-btn" onclick="closeScanner()">닫기</button>
+</div>
+
+<div id="sig-modal" class="modal-overlay" hidden>
+  <div class="sig-card">
+    <div class="sig-handle"></div>
+    <div class="sig-title" id="sig-title"></div>
+    <div class="sig-subtitle">서명을 완료해야 다음으로 넘어갈 수 있어요.</div>
+    <div class="sig-pad-wrap">
+      <canvas id="sig-canvas"></canvas>
+    </div>
+    <div class="auth-error" id="sig-error" hidden></div>
+    <div class="sig-btn-row">
+      <button class="sig-clear-btn" onclick="clearSignature()">지우기</button>
+      <button class="auth-btn auth-btn-primary sig-submit-btn" id="sig-submit-btn" onclick="submitSignatureModal()">제출</button>
+    </div>
+    <button class="sig-later-btn" id="sig-later-btn" hidden onclick="closeSignatureModal()">나중에 하기</button>
+  </div>
+</div>
+
+<div id="loading-overlay" class="loading-overlay" hidden>
+  <div class="loading-box">확인 중...</div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+</body>
+</html>
