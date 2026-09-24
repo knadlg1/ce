@@ -138,27 +138,44 @@
   }
   loadAllOrgs();
 
+  // 기관명을 문서ID로 쓰되 Firestore가 금지하는 문자만 안전하게 치환 — 서버(functions의
+  // sanitizeOrgId)와 같은 규칙. 직접입력으로 새 기관을 등록할 때 이걸로 orgId를 만든다.
+  function sanitizeOrgIdClient(name) {
+    let id = String(name || '').trim().replace(/\//g, '_').replace(/\s+/g, ' ');
+    id = id.replace(/^\.+/, '').replace(/\.+$/, '');
+    if (!id) id = 'org_' + Math.random().toString(16).slice(2, 10);
+    return id;
+  }
+
   window.onOrgSearchInput = function () {
     const q = document.getElementById('signup-org-search').value.trim();
     selectedOrg = null;
     const dd = document.getElementById('signup-org-dropdown');
     if (!q) { dd.style.display = 'none'; dd.innerHTML = ''; return; }
     const matches = allOrgs.filter(o => o.name.includes(q)).slice(0, 30);
-    if (!matches.length) {
-      dd.innerHTML = '<div class="org-option-empty">검색 결과가 없습니다.</div>';
-    } else {
-      dd.innerHTML = matches.map(o =>
-        `<div class="org-option" data-id="${escapeHtml(o.id)}" data-name="${escapeHtml(o.name)}">${escapeHtml(o.name)}</div>`
-      ).join('');
+    let html = matches.map(o =>
+      `<div class="org-option" data-id="${escapeHtml(o.id)}" data-name="${escapeHtml(o.name)}">${escapeHtml(o.name)}</div>`
+    ).join('');
+    // KMA 자동수집이 아직 안 됐거나 새로 생긴 기관이라 목록에 없을 수 있다 — 검색어와
+    // 정확히 같은 이름이 이미 목록에 없으면, 그 이름 그대로 새 기관으로 바로 등록하는
+    // 옵션을 항상 마지막에 보여준다(가입이 목록 상태에 막히지 않도록).
+    const exactExists = allOrgs.some(o => o.name === q);
+    if (!exactExists) {
+      html += `<div class="org-option org-option-manual" data-manual="1" data-name="${escapeHtml(q)}">+ "${escapeHtml(q)}" 새 기관으로 등록</div>`;
     }
+    dd.innerHTML = html;
     dd.style.display = 'block';
   };
 
   document.addEventListener('click', (e) => {
     const opt = e.target.closest('.org-option');
     if (opt) {
-      selectedOrg = { id: opt.dataset.id, name: opt.dataset.name };
-      document.getElementById('signup-org-search').value = opt.dataset.name;
+      if (opt.dataset.manual) {
+        selectedOrg = { id: sanitizeOrgIdClient(opt.dataset.name), name: opt.dataset.name, isNew: true };
+      } else {
+        selectedOrg = { id: opt.dataset.id, name: opt.dataset.name };
+      }
+      document.getElementById('signup-org-search').value = selectedOrg.name;
       document.getElementById('signup-org-dropdown').style.display = 'none';
       return;
     }
@@ -187,6 +204,14 @@
     btn.disabled = true;
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
+      // 검색 목록에 없던(직접입력) 기관이면 orgs에도 같이 등록해둬서 다음 관리자
+      // 가입 때는 검색으로 바로 나오게 한다.
+      if (selectedOrg.isNew) {
+        await setDoc(doc(db, 'orgs', selectedOrg.id), {
+          name: selectedOrg.name,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+      }
       await setDoc(doc(db, 'admins', cred.user.uid), {
         orgId: selectedOrg.id,
         orgName: selectedOrg.name,
