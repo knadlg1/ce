@@ -113,6 +113,8 @@
   // ── 회원가입 — 이메일/비밀번호 + 기관 검색·선택(자기가입, qr-admin의 OTP+CF 가입과 다름) ──
   let allOrgs = [];
   let selectedOrg = null; // { id, name }
+  // 가입 처리 중 플래그 — doSignup과 onAuthStateChanged가 서로 경쟁하지 않게 한다.
+  let signingUp = false;
 
   window.showSignup = function () {
     document.getElementById('auth-wrap').querySelector('.auth-card').style.display = 'none';
@@ -202,8 +204,26 @@
     }
     const btn = document.getElementById('btn-submit-signup');
     btn.disabled = true;
+    // 가입 처리 중에는 onAuthStateChanged의 "admins 문서 없으면 자동 로그아웃" 경로를
+    // 막는다 — 계정 생성 직후엔 admins 문서를 아직 쓰기 전이라, 이 가드가 없으면
+    // 로그인 상태 감지기가 먼저 실행돼 방금 만든 계정을 그대로 로그아웃시켜버린다
+    // (그 에러는 숨겨진 로그인 카드에 찍혀서 화면상 "아무 반응 없음"으로 보였다).
+    signingUp = true;
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      let uid;
+      try {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        uid = cred.user.uid;
+      } catch (e1) {
+        if (e1 && e1.code === 'auth/email-already-in-use') {
+          // 이전 시도에서 계정만 만들어지고 admins 문서가 안 남은 경우 복구 —
+          // 같은 비밀번호로 로그인해서 그대로 이어서 진행한다.
+          const cred2 = await signInWithEmailAndPassword(auth, email, password);
+          uid = cred2.user.uid;
+        } else {
+          throw e1;
+        }
+      }
       // 검색 목록에 없던(직접입력) 기관이면 orgs에도 같이 등록해둬서 다음 관리자
       // 가입 때는 검색으로 바로 나오게 한다.
       if (selectedOrg.isNew) {
@@ -212,22 +232,20 @@
           updatedAt: serverTimestamp(),
         }, { merge: true });
       }
-      await setDoc(doc(db, 'admins', cred.user.uid), {
+      await setDoc(doc(db, 'admins', uid), {
         orgId: selectedOrg.id,
         orgName: selectedOrg.name,
         email,
         createdAt: serverTimestamp(),
-      });
-      // onAuthStateChanged도 뒤이어 실행되지만(같은 admins 문서를 다시 읽어 동일하게
-      // enterDashboard를 부름 — 멱등이라 무해), 방금 setDoc한 값을 직접 써서 여기서도
-      // 바로 진입시켜 그 사이의 레이스(문서가 아직 안 읽힐 시점)를 피한다.
+      }, { merge: true });
       ORG_ID = selectedOrg.id;
       orgName = selectedOrg.name;
       await enterDashboard();
     } catch (e) {
-      errEl.textContent = '가입 실패: ' + e.message;
+      errEl.textContent = '가입 실패: ' + (e && e.message ? e.message : e);
       errEl.style.display = 'block';
     } finally {
+      signingUp = false;
       btn.disabled = false;
     }
   };
@@ -675,6 +693,9 @@
 
   // ── 로그인 상태 진입점 ──
   onAuthStateChanged(auth, async (user) => {
+    // 가입 처리 중이면 doSignup이 admins 문서 저장까지 마치고 직접 대시보드로 진입시킨다
+    // — 여기서 먼저 끼어들면 아직 없는 admins 문서를 보고 방금 만든 계정을 로그아웃시킨다.
+    if (signingUp) return;
     if (!user || user.isAnonymous) {
       // 익명 세션(가입화면 기관검색용)이거나 로그아웃 상태 — 실제 관리자 로그인 아님.
       document.getElementById('dashboard').style.display = 'none';
