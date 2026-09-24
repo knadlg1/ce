@@ -1,0 +1,20 @@
+name: KMA connectivity test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Try reaching edu.kma.org
+        run: |
+          echo "--- HTTP status / timing ---"
+          curl -s -o /tmp/kma.html -w "http_code=%{http_code} connect=%{time_connect}s total=%{time_total}s size=%{size_download}\n" \
+            --max-time 20 \
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+            "https://edu.kma.org/edu/schedule?start_dt=2026-09-24&end_dt=2026-11-24" || echo "CURL FAILED exit=$?"
+          echo "--- parsed item count ---"
+          grep -c 'class="mb5" onclick' /tmp/kma.html || echo "no items found"
+          echo "--- sample org names ---"
+          grep -o '기관명</span><span title="[^"]*"' /tmp/kma.html | sed 's/.*title="//;s/"$//' | sort -u | head -5 || true
