@@ -777,10 +777,17 @@
     const points = [];
     for (let p = 1; p <= lastPoint; p++) {
       const isFinalPoint = (finalPeriodNum != null && p === finalPeriodNum);
+      let cls = '';
+      if (p === currentPeriod) {
+        // 최종 지점(🏁)은 'active', 카메라(📷)는 'active-camera'
+        cls = isFinalPoint ? 'active' : 'active-camera';
+      } else if (p < currentPeriod) {
+        cls = 'done';
+      }
       points.push({
         p,
         isFinalPoint,
-        cls: p === currentPeriod ? 'active' : (p < currentPeriod ? 'done' : ''),
+        cls,
         icon: isFinalPoint ? '🏁' : '📷',
         count: periodCounts[p] || 0,
       });
@@ -1360,12 +1367,12 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .qr-wrap{display:flex;gap:24px;align-items:stretch;justify-content:center;}
 .qr-side-left{display:flex;flex-direction:column;gap:32px;width:240px;flex-shrink:0;}
 .qr-org-date{display:flex;flex-direction:column;gap:10px;}
-.org-name-big{font-size:28px;font-weight:800;color:var(--text);line-height:1.3;word-break:keep-all;}
+.org-name-big{font-size:56px;font-weight:800;color:var(--text);line-height:1.3;word-break:keep-all;}
 .qr-side-actions{display:flex;flex-direction:column;gap:12px;}
 
 /* 이전/다음: 좌우 한 쌍. 다음(진행 방향)만 채움색으로 강조하고 이전은 연하게. */
 .nav-pair{display:flex;gap:8px;}
-.nav-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:14px 8px;border-radius:12px;font-size:14px;font-weight:800;cursor:pointer;border:1.5px solid var(--border);background:var(--surface);color:var(--muted);transition:all .15s ease;}
+.nav-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:28px 16px;border-radius:12px;font-size:28px;font-weight:800;cursor:pointer;border:1.5px solid var(--border);background:var(--surface);color:var(--muted);transition:all .15s ease;}
 .nav-btn:hover:not(:disabled){border-color:var(--brand);color:var(--brand);}
 .nav-btn:disabled{opacity:.4;cursor:not-allowed;}
 .nav-btn-next{background:var(--brand);border-color:var(--brand);color:#fff;}
@@ -1373,10 +1380,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .nav-arrow{font-size:11px;opacity:.9;}
 
 /* 종료: 되돌리기 어려운 동작이라 색과 부제로 "서명까지 받는다"는 걸 분명히 드러낸다. */
-.end-btn{display:flex;flex-direction:column;align-items:center;gap:3px;padding:14px 10px;border-radius:12px;cursor:pointer;border:1.5px solid #fecaca;background:#fef2f2;color:#b91c1c;transition:all .15s ease;}
+.end-btn{display:flex;flex-direction:column;align-items:center;gap:3px;padding:28px 20px;border-radius:12px;cursor:pointer;border:1.5px solid #fecaca;background:#fef2f2;color:#b91c1c;transition:all .15s ease;}
 .end-btn:hover{background:#fee2e2;border-color:#fca5a5;}
-.end-btn-main{font-size:15px;font-weight:800;}
-.end-btn-sub{font-size:11px;font-weight:700;opacity:.85;}
+.end-btn-main{font-size:30px;font-weight:800;}
+.end-btn-sub{font-size:9px;font-weight:700;opacity:.85;}
 .qr-card{background:var(--surface);border-radius:20px;padding:40px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;gap:22px;}
 #qr-canvas{border-radius:12px;min-width:520px;min-height:520px;display:flex;align-items:center;justify-content:center;}
 .qr-placeholder{font-size:20px;font-weight:700;color:var(--muted);}
@@ -1396,7 +1403,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .tl-dot{position:relative;width:62px;height:62px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;border:2px dashed var(--border);background:#fff;color:var(--muted);flex-shrink:0;}
 .tl-dot.done{border-style:solid;border-color:#c7d2fe;background:#eef2ff;color:#6366f1;}
 .tl-dot.active{border-style:solid;border-color:var(--brand);background:var(--brand);color:#fff;box-shadow:0 0 0 5px rgba(108,99,255,0.18);animation:tlPulse 1.8s ease-in-out infinite;}
+.tl-dot.active-camera{border-style:solid;border-color:var(--border);background:#fff;color:var(--muted);position:relative;}
+.tl-dot.active-camera::before{content:'↓';position:absolute;top:-16px;left:50%;transform:translateX(-50%);color:#ef4444;font-size:18px;font-weight:bold;animation:cameraArrowBounce 1s ease-in-out infinite;}
 @keyframes tlPulse{0%,100%{box-shadow:0 0 0 5px rgba(108,99,255,0.18);}50%{box-shadow:0 0 0 11px rgba(108,99,255,0.08);}}
+@keyframes cameraArrowBounce{0%{transform:translateX(-50%) translateY(0);}50%{transform:translateX(-50%) translateY(-8px);}100%{transform:translateX(-50%) translateY(0);}}
 .tl-dot-badge{position:absolute;right:-5px;bottom:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--text);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #fff;}
 .tl-line{height:2px;width:12px;background:var(--border);flex-shrink:0;}
 .tl-class{width:56px;padding:8px 0;border-radius:10px;font-size:13px;font-weight:800;text-align:center;background:var(--canvas);color:var(--muted);border:1.5px solid var(--border);white-space:nowrap;flex-shrink:0;}
@@ -1527,7 +1537,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
       <div class="qr-side-left">
         <div class="qr-org-date">
           <div class="org-name-big" id="org-name-label">연수교육 QR 인증</div>
-          <input type="date" id="session-date" class="auth-input" style="width:100%;margin:0;font-size:22px;font-weight:800;padding:14px 18px;text-align:center;">
+          <input type="date" id="session-date" class="auth-input" style="width:100%;margin:0;font-size:44px;font-weight:800;padding:14px 18px;text-align:center;">
         </div>
         <div class="qr-side-actions">
           <!-- 이전/다음은 방향 이동이라 좌우로 나란히, 종료는 성격이 다른 동작이라 아래 한 줄 -->
