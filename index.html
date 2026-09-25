@@ -401,15 +401,27 @@
     }
   }
 
+  // 세로 교시 타임라인 — 관리자 화면의 📷 지점/교시 박스 번갈아 그리기 구조를 그대로
+  // 가져오되, 상태 기준만 "내가 찍었는가"로 바꾸고 각 📷 지점 옆에 찍은 시각을 표시한다.
+  // 내 체크인 중 최대 교시까지 그리고, 그 다음에 "다음에 찍을 지점" 하나를 미체크로 더 그린다.
   function renderCheckins() {
     const el = document.getElementById('checkin-list');
-    if (!checkins.length) { el.innerHTML = '<div class="empty-text">아직 체크한 교시가 없습니다.</div>'; return; }
-    el.innerHTML = checkins.map(c => `
-      <div class="checkin-item">
-        <span class="checkin-period">${c.period}교시</span>
-        <span class="checkin-time">${fmtCheckedAt(c.checkedAt)}${c.makeupApproved ? ' (서명출석)' : ''}</span>
-      </div>
-    `).join('');
+    const maxChecked = checkins.length ? Math.max(...checkins.map(c => c.period)) : 0;
+    const lastPoint = maxChecked + 1;
+    let html = '';
+    for (let p = 1; p <= lastPoint; p++) {
+      const c = checkins.find(x => x.period === p);
+      const timeText = c
+        ? `${fmtCheckedAt(c.checkedAt)}${c.makeupApproved ? ' (서명출석)' : ''}`
+        : '미체크';
+      html += `<div class="tl-dot${c ? ' done' : ''}">📷<span class="tl-time${c ? '' : ' tl-time-muted'}">${timeText}</span></div>`;
+      if (p < lastPoint) {
+        html += '<div class="tl-vline"></div>';
+        html += `<div class="tl-class">${p}</div>`;
+        html += '<div class="tl-vline"></div>';
+      }
+    }
+    el.innerHTML = html;
   }
 
   // ── 시작/종료 서명(스킵 불가) + 구제요청 서명(취소 가능) — 공용 서명 모달 ──
@@ -512,14 +524,27 @@
   };
 
   async function loadRosterStatus() {
-    if (!currentSessionId) { rosterStatus = null; return; }
+    if (!currentSessionId) { rosterStatus = null; renderSignaturePreviews(); return; }
     try {
       const snap = await getDoc(doc(db, 'sessions', currentSessionId, 'roster', String(kakaoId)));
       rosterStatus = snap.exists() ? snap.data() : null;
+      renderSignaturePreviews();
       checkAutoSignature();
     } catch (e) {
       console.warn('서명 상태 조회 실패:', e);
     }
+  }
+
+  // QR 스캔 카드 왼쪽의 시작/종료 서명 미리보기 — rosterStatus.startSignature/endSignature는
+  // base64 PNG 문자열(data: 접두사 없음)이라 그대로 <img src="data:image/png;base64,...">로 표시한다.
+  function renderSignaturePreviews() {
+    const startEl = document.getElementById('sig-preview-start');
+    const endEl = document.getElementById('sig-preview-end');
+    if (!startEl || !endEl) return;
+    const startSig = rosterStatus && rosterStatus.startSignature;
+    const endSig = rosterStatus && rosterStatus.endSignature;
+    startEl.innerHTML = startSig ? `<img src="data:image/png;base64,${startSig}">` : '<span class="empty-text">대기중</span>';
+    endEl.innerHTML = endSig ? `<img src="data:image/png;base64,${endSig}">` : '<span class="empty-text">대기중</span>';
   }
 
   // 미완료 서명 자동 오픈 — rosterStatus(서버 상태)만 기준으로 삼는다. 방금 스캔했든,
@@ -663,15 +688,27 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 
 .card{background:var(--surface);margin:14px 16px 0;border-radius:14px;padding:16px;box-shadow:var(--shadow);}
 .card-title{font-size:15px;font-weight:800;color:var(--brand);margin-bottom:12px;}
-.qr-scan-card{display:flex;justify-content:center;}
-.qr-scan-btn{background:var(--brand);color:#fff;border:none;padding:16px 40px;border-radius:var(--pill);font-size:16px;font-weight:800;cursor:pointer;width:100%;}
+.qr-scan-card{display:flex;gap:12px;}
+.sig-preview-col{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0;}
+.sig-preview-box{border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.sig-preview-header{padding:6px 10px;font-size:12px;font-weight:700;}
+.sig-preview-header-start{background:#eef2ff;color:#4338ca;}
+.sig-preview-header-end{background:#fef2f2;color:#b91c1c;}
+.sig-preview-body{height:64px;display:flex;align-items:center;justify-content:center;background:#fafaff;}
+.sig-preview-body img{max-height:100%;max-width:100%;object-fit:contain;}
+.qr-scan-btn{flex-shrink:0;width:110px;background:var(--brand);color:#fff;border:none;border-radius:16px;font-size:15px;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;}
 .qr-scan-btn:hover{background:var(--brand-dark);}
 
 .empty-text{font-size:13px;color:var(--muted);}
-.checkin-item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--canvas);font-size:14px;}
-.checkin-item:last-child{border-bottom:none;}
-.checkin-period{font-weight:700;color:var(--text);}
-.checkin-time{color:var(--muted);font-size:13px;}
+
+/* ── 출석현황 세로 타임라인(관리자 화면 .tl-* 디자인을 세로로 변형) ── */
+.tl-col{display:flex;flex-direction:column;align-items:flex-start;padding-left:6px;}
+.tl-dot{position:relative;width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;border:2px dashed var(--border);background:#fff;color:var(--muted);flex-shrink:0;}
+.tl-dot.done{border-style:solid;border-color:#c7d2fe;background:#eef2ff;color:#6366f1;}
+.tl-vline{width:2px;height:14px;background:var(--border);margin-left:25px;}
+.tl-class{width:44px;margin-left:4px;padding:8px 0;border-radius:10px;font-size:13px;font-weight:800;text-align:center;background:var(--canvas);color:var(--muted);border:1.5px solid var(--border);}
+.tl-time{position:absolute;left:64px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;}
+.tl-time-muted{color:var(--muted);font-weight:600;}
 
 .schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--canvas);}
 .schedule-row:last-child{border-bottom:none;}
@@ -753,12 +790,22 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
   </div>
 
   <div class="card qr-scan-card">
-    <button class="qr-scan-btn" onclick="openScanner()">📷 QR 스캔</button>
+    <div class="sig-preview-col">
+      <div class="sig-preview-box">
+        <div class="sig-preview-header sig-preview-header-start">시작 서명</div>
+        <div class="sig-preview-body" id="sig-preview-start"><span class="empty-text">대기중</span></div>
+      </div>
+      <div class="sig-preview-box">
+        <div class="sig-preview-header sig-preview-header-end">종료 서명</div>
+        <div class="sig-preview-body" id="sig-preview-end"><span class="empty-text">대기중</span></div>
+      </div>
+    </div>
+    <button class="qr-scan-btn" onclick="openScanner()">📷<br>QR 스캔</button>
   </div>
 
   <div class="card">
     <div class="card-title">출석현황</div>
-    <div id="checkin-list"><div class="empty-text">아직 체크한 교시가 없습니다.</div></div>
+    <div id="checkin-list" class="tl-col"><div class="empty-text">아직 체크한 교시가 없습니다.</div></div>
   </div>
 
   <div class="card">
