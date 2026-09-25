@@ -422,26 +422,43 @@
     }
   }
 
-  // 세로 교시 타임라인 — 관리자 화면의 📷 지점/교시 박스 번갈아 그리기 구조를 그대로
-  // 가져오되, 상태 기준만 "내가 찍었는가"로 바꾸고 각 📷 지점 옆에 찍은 시각을 표시한다.
-  // 내 체크인 중 최대 교시까지 그리고, 그 다음에 "다음에 찍을 지점" 하나를 미체크로 더 그린다.
+  // 교시 하나를 한 줄로 — [찍은시각] - N교시 - [찍은시각].
+  // 세로로 쌓으면 교시가 늘수록 화면이 끝없이 길어져서, 교시당 한 행인 표로 바꿨다.
+  // 스캔 지점 p는 (p-1)교시 뒤이자 p교시 앞이라 두 역할을 겸한다 — 그래서 N교시 행의
+  // 오른쪽 시각과 (N+1)교시 행의 왼쪽 시각은 같은 체크인 하나를 가리킨다.
+  function fmtCheckedAtShort(ts) {
+    try {
+      const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts);
+      if (isNaN(d.getTime())) return '-';
+      const yy = String(d.getFullYear()).slice(2);
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      return `${yy}.${d.getMonth() + 1}.${d.getDate()} ${hh}:${mm}`;
+    } catch { return '-'; }
+  }
+
   function renderCheckins() {
     const el = document.getElementById('checkin-list');
     const maxChecked = checkins.length ? Math.max(...checkins.map(c => c.period)) : 0;
-    const lastPoint = maxChecked + 1;
-    let html = '';
-    for (let p = 1; p <= lastPoint; p++) {
+    // 아직 하나도 안 찍었어도 1교시 행은 보여줘야 "무엇을 찍어야 하는지"가 전달된다.
+    const rowCount = Math.max(1, maxChecked);
+
+    const cell = (p) => {
       const c = checkins.find(x => x.period === p);
-      const timeText = c
-        ? `${fmtCheckedAt(c.checkedAt)}${c.makeupApproved ? ' (서명출석)' : ''}`
-        : '미체크';
-      const isProgress = p <= maxChecked;
-      html += `<div class="tl-dot${c ? ' done' : ''}">📷<span class="tl-time${c ? '' : ' tl-time-muted'}">${timeText}</span></div>`;
-      if (p < lastPoint) {
-        html += `<div class="tl-vline${isProgress ? ' progress' : ''}"></div>`;
-        html += `<div class="tl-class${isProgress ? ' progress' : ''}">${p}교시</div>`;
-        html += `<div class="tl-vline${isProgress && p === maxChecked ? ' progress' : ''}"></div>`;
-      }
+      if (!c) return '<div class="ck-cell"><span class="ck-cam">📷</span><span class="ck-time ck-time-muted">미체크</span></div>';
+      const extra = c.makeupApproved ? '<br>(서명출석)' : '';
+      return `<div class="ck-cell"><span class="ck-cam done">📷</span><span class="ck-time">${fmtCheckedAtShort(c.checkedAt)}${extra}</span></div>`;
+    };
+
+    let html = '';
+    for (let p = 1; p <= rowCount; p++) {
+      // p교시는 앞(p)과 뒤(p+1) 두 지점을 모두 찍어야 인정된다.
+      const doneBoth = checkins.some(x => x.period === p) && checkins.some(x => x.period === p + 1);
+      html += `<div class="ck-row">${cell(p)}`
+        + '<div class="ck-dash">-</div>'
+        + `<div class="ck-period${doneBoth ? ' done' : ''}">${p}교시</div>`
+        + '<div class="ck-dash">-</div>'
+        + `${cell(p + 1)}</div>`;
     }
     el.innerHTML = html;
   }
@@ -748,15 +765,20 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .empty-text{font-size:13px;color:var(--muted);}
 
 /* ── 출석현황 세로 타임라인(관리자 화면 .tl-* 디자인을 세로로 변형) ── */
-.tl-col{display:flex;flex-direction:column;align-items:flex-start;padding-left:6px;}
-.tl-dot{position:relative;width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;border:2px dashed var(--border);background:#fff;color:var(--muted);flex-shrink:0;}
-.tl-dot.done{border-style:solid;border-color:#c7d2fe;background:#eef2ff;color:#6366f1;}
-.tl-vline{width:2px;height:14px;background:var(--border);margin-left:25px;}
-.tl-vline.progress{background:var(--brand);}
-.tl-class{width:52px;margin-left:4px;padding:8px 0;border-radius:10px;font-size:12px;font-weight:800;text-align:center;background:var(--canvas);color:var(--muted);border:1.5px solid var(--border);}
-.tl-class.progress{background:var(--brand-xlight);color:var(--brand);border-color:var(--brand);}
-.tl-time{position:absolute;left:64px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;}
-.tl-time-muted{color:var(--muted);font-weight:600;}
+.ck-table{display:flex;flex-direction:column;}
+/* 출석현황 — 교시당 한 행: [찍은시각] - N교시 - [찍은시각].
+   양옆 칸은 각각 그 교시의 앞/뒤 스캔 지점이고, 가운데가 교시다. */
+.ck-row{display:grid;grid-template-columns:1fr 12px 54px 12px 1fr;align-items:stretch;border-top:1px solid var(--border);}
+.ck-row:last-child{border-bottom:1px solid var(--border);}
+.ck-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:9px 4px;min-width:0;}
+.ck-cam{font-size:19px;line-height:1;filter:grayscale(1);opacity:.45;}
+.ck-cam.done{filter:none;opacity:1;}
+.ck-time{font-size:12px;font-weight:700;color:var(--text);text-align:center;line-height:1.3;word-break:keep-all;}
+.ck-time-muted{color:var(--muted);font-weight:600;}
+.ck-dash{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;}
+.ck-period{display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--muted);background:var(--canvas);border-left:1px solid var(--border);border-right:1px solid var(--border);}
+/* 앞뒤를 다 찍어 인정된 교시만 색을 채운다 — 어디까지 인정됐는지 한눈에 보이도록. */
+.ck-period.done{background:var(--brand-xlight);color:var(--brand);}
 
 .schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--canvas);}
 .schedule-row:last-child{border-bottom:none;}
@@ -863,7 +885,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 
   <div class="card">
     <div class="card-title">출석현황</div>
-    <div id="checkin-list" class="tl-col"><div class="empty-text">아직 체크한 교시가 없습니다.</div></div>
+    <div id="checkin-list" class="ck-table"><div class="empty-text">아직 체크한 교시가 없습니다.</div></div>
   </div>
 
   <div class="card">
