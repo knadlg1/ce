@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>연수교육 QR 인증 — 관리자</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
   import { getAuth, signInAnonymously, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -113,6 +114,8 @@
     document.getElementById('dashboard').style.display = 'flex';
     document.getElementById('org-name-label').textContent = orgName || '연수교육 QR 인증';
     document.getElementById('session-date').value = todayKST();
+    const docgenDate = document.getElementById('docgen-date');
+    if (docgenDate && !docgenDate.value) docgenDate.value = todayKST();
     startRosterListener();
     startPeriodCountsListener();
     startRosterPoll();
@@ -338,7 +341,11 @@
     const btn = document.getElementById('btn-end-session');
     if (!btn) return;
     btn.disabled = isFinalPeriod;
-    btn.textContent = isFinalPeriod ? '교육 종료됨' : '교육 종료 QR 및 서명';
+    // 버튼 안이 main/sub 두 줄 구조라 textContent로 덮어쓰면 안 되고 각각 갱신한다.
+    const main = btn.querySelector('.end-btn-main');
+    const sub = btn.querySelector('.end-btn-sub');
+    if (main) main.textContent = isFinalPeriod ? '교육 종료됨' : '교육 종료';
+    if (sub) sub.textContent = isFinalPeriod ? '마지막 QR 표시 중' : '🏁 마지막 QR + 서명 받기';
   }
 
   window.endSession = async function () {
@@ -797,7 +804,9 @@
   }
 
   function renderPeriodTabs() {
-    document.getElementById('btn-start-period').textContent = currentPeriod ? '다음 교시 ▶' : '교육시작';
+    // 버튼 안에 라벨/화살표가 분리돼 있어서 라벨 span만 바꾼다(화살표는 그대로 유지).
+    const nextLabelEl = document.querySelector('#btn-start-period .nav-label');
+    if (nextLabelEl) nextLabelEl.textContent = currentPeriod ? '다음 교시' : '교육시작';
     updatePrevNextButtons();
     const html = timelineHtml();
     document.getElementById('period-tabs').innerHTML = html;
@@ -971,6 +980,296 @@
     renderPeriodTabs();
   }
 
+
+  // ══════════════════════════════════════════════════════════════════
+  // 문서생성(엑셀 제출용) — knadlg1/qr(qr-admin)의 검증된 구현을 그대로 가져왔다.
+  // 다른 점: qr-admin은 "지난 기록"에서 세션을 골라 docGen* 값을 채웠지만, 이 서비스엔
+  // 그 화면이 없으므로 아래 loadDocGenData(date)가 날짜 하나로 직접 채운다.
+  // ══════════════════════════════════════════════════════════════════
+
+  // 관리자 탭의 "문서생성" — 지정한 날짜의 roster/checkins를 읽어 docGen* 상태를 채운다.
+  window.openDocGenForDate = async function () {
+    const dateInput = document.getElementById('docgen-date');
+    const date = (dateInput && dateInput.value) || todayKST();
+    const statusEl = document.getElementById('docgen-status');
+    const btn = document.getElementById('btn-open-docgen');
+    if (btn) btn.disabled = true;
+    if (statusEl) { statusEl.textContent = '명단 불러오는 중...'; statusEl.style.display = 'block'; }
+    try {
+      const sid = `${ORG_ID}_${date}`;
+      const [rosterSnap, checkinsSnap] = await Promise.all([
+        getDocs(collection(db, 'sessions', sid, 'roster')),
+        getDocs(collection(db, 'sessions', sid, 'checkins')),
+      ]);
+      if (rosterSnap.empty) {
+        if (statusEl) statusEl.textContent = '그 날짜에 출석 기록이 없습니다.';
+        return;
+      }
+      docGenStudents = rosterSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      docGenSessionLabel = date + ' 출석 명단';
+      docGenSessionDate = date;
+
+      // studentId -> { period: '시각' } — qr-admin의 loadSessionDetail과 같은 형태로 만든다.
+      const map = {};
+      checkinsSnap.forEach(d => {
+        const c = d.data();
+        const key = c.kakaoId;
+        if (!map[key]) map[key] = {};
+        let timeStr = '';
+        if (c.checkedAt && c.checkedAt.toDate) {
+          timeStr = c.checkedAt.toDate().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' });
+        } else if (c.checkedAt) {
+          timeStr = String(c.checkedAt);
+        }
+        if (c.makeupApproved) timeStr = timeStr + ' (서명출석)';
+        map[key][c.period] = timeStr;
+      });
+      docGenCheckinMap = map;
+
+      if (statusEl) statusEl.style.display = 'none';
+      openDocGenModal();
+    } catch (e) {
+      if (statusEl) statusEl.textContent = '불러오기 실패: ' + e.message;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  let docGenStudents = []; // 현재 열려있는 세션의 학생 목록: [{id, name}]
+  let docGenSessionLabel = '';
+  let docGenSessionDate = ''; // 세션 실제 날짜(YYYY-MM-DD) — 문서생성 연도 계산용
+  let docGenCheckinMap = {}; // studentId -> { period: time } — 문서생성 시 교시별 체크인 시간
+  let docGenLoadToken = 0; // loadSessionDetail 요청 토큰 — 응답 순서 역전 시 최신 호출만 반영
+
+  window.openDocGenModal = function () {
+    const listEl = document.getElementById('doc-gen-student-list');
+    listEl.innerHTML = docGenStudents.map((s, i) => `
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:var(--canvas);font-size:14px;font-weight:600;cursor:pointer;">
+        <input type="checkbox" class="doc-gen-check" data-idx="${i}" checked style="width:18px;height:18px;cursor:pointer;">
+        <span>${escapeHtml(s.name || s.id)}</span>
+      </label>
+    `).join('');
+    document.getElementById('doc-gen-date-label').textContent = docGenSessionLabel;
+    document.getElementById('doc-gen-modal').style.display = 'flex';
+  };
+
+  window.toggleAllDocGenChecks = function (checked) {
+    document.querySelectorAll('.doc-gen-check').forEach(cb => { cb.checked = checked; });
+  };
+
+  window.closeDocGenModal = function () {
+    document.getElementById('doc-gen-modal').style.display = 'none';
+  };
+
+  window.confirmDocGen = async function () {
+    const selected = [];
+    document.querySelectorAll('.doc-gen-check').forEach(cb => {
+      if (cb.checked) selected.push(docGenStudents[Number(cb.dataset.idx)]);
+    });
+    if (!selected.length) { alert('선택된 학생이 없습니다.'); return; }
+    closeDocGenModal();
+
+    const XLSX_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+    function colLetters(c) {
+      let s = '';
+      c = c + 1;
+      while (c > 0) { const m = (c - 1) % 26; s = String.fromCharCode(65 + m) + s; c = Math.floor((c - 1) / 26); }
+      return s;
+    }
+    function cellAddr(r, c) { return colLetters(c) + (r + 1); }
+
+    try {
+      const res = await fetch('./template-연수교육.xlsx');
+      if (!res.ok) throw new Error('템플릿 파일을 불러올 수 없습니다 (' + res.status + ')');
+      const buf = await res.arrayBuffer();
+      const zip = await JSZip.loadAsync(buf);
+      const sheetPath = 'xl/worksheets/sheet1.xml';
+      const sheetFile = zip.file(sheetPath);
+      if (!sheetFile) throw new Error('템플릿 시트를 찾을 수 없습니다.');
+      const xmlText = await sheetFile.async('text');
+      const parser = new DOMParser();
+      const xdoc = parser.parseFromString(xmlText, 'application/xml');
+      const sheetData = xdoc.getElementsByTagNameNS(XLSX_NS, 'sheetData')[0];
+
+      function getCell(r, c) {
+        const a = cellAddr(r, c);
+        const cells = xdoc.getElementsByTagNameNS(XLSX_NS, 'c');
+        for (let i = 0; i < cells.length; i++) {
+          if (cells[i].getAttribute('r') === a) return cells[i];
+        }
+        return null;
+      }
+      function getRow(r) {
+        const rows = xdoc.getElementsByTagNameNS(XLSX_NS, 'row');
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i].getAttribute('r') === String(r + 1)) return rows[i];
+        }
+        return null;
+      }
+      function setCellValue(r, c, value) {
+        const cellEl = getCell(r, c);
+        if (!cellEl) return false;
+        Array.from(cellEl.childNodes).forEach(n => cellEl.removeChild(n));
+        cellEl.setAttribute('t', 'inlineStr');
+        const isEl = xdoc.createElementNS(XLSX_NS, 'is');
+        const tEl = xdoc.createElementNS(XLSX_NS, 't');
+        tEl.setAttribute('xml:space', 'preserve');
+        tEl.textContent = String(value ?? '');
+        isEl.appendChild(tEl);
+        cellEl.appendChild(isEl);
+        return true;
+      }
+
+      // 제목(A1) 치환: 원본이 공유 문자열(sharedStrings.xml) 참조이면 원본 텍스트를 읽어와 치환 후 inlineStr로 교체
+      const dateStr = String(docGenSessionDate || '');
+      const year = /^\d{4}-\d{2}-\d{2}/.test(dateStr) ? dateStr.slice(0, 4) : String(new Date().getFullYear());
+      const a1Cell = getCell(0, 0);
+      if (a1Cell) {
+        let a1Text = '';
+        const a1V = a1Cell.getElementsByTagNameNS(XLSX_NS, 'v')[0];
+        if (a1Cell.getAttribute('t') === 's' && a1V) {
+          const sstFile = zip.file('xl/sharedStrings.xml');
+          if (sstFile) {
+            const sstText = await sstFile.async('text');
+            const sstDoc = parser.parseFromString(sstText, 'application/xml');
+            const sstItems = Array.from(sstDoc.getElementsByTagNameNS(XLSX_NS, 'si')).map(si => si.textContent);
+            const idx = parseInt(a1V.textContent, 10);
+            a1Text = sstItems[idx] || '';
+          }
+        } else if (a1V) {
+          a1Text = a1V.textContent;
+        }
+        // qr-admin 원본은 academyName(학원명)을 넣었는데, 이 서비스에서는 기관명이 orgName이다.
+        const newTitle = a1Text.replace('{{교육년도}}', year + '년').replace('{{교육기관명}}', orgName || '');
+        setCellValue(0, 0, newTitle);
+      }
+
+      const extraSnaps = await Promise.all(selected.map(s => getDoc(doc(db, 'studentExtraInfo', s.id))));
+
+      // 템플릿에는 학생 15명분 블록(각 3행)이 미리 만들어져 있음. 15명 초과 시 마지막 블록을 복제해서 틀/서식을 그대로 확장
+      const existingBlocks = 15;
+      const totalBlocks = selected.length;
+      if (totalBlocks > existingBlocks) {
+        const lastBlockFirstRow = 3 + 3 * (existingBlocks - 1);
+        const mergeCellsEl = xdoc.getElementsByTagNameNS(XLSX_NS, 'mergeCells')[0];
+        let addedMerges = 0;
+        for (let blockIdx = existingBlocks; blockIdx < totalBlocks; blockIdx++) {
+          const newFirstRow = 3 + 3 * blockIdx;
+          for (let sub = 0; sub < 3; sub++) {
+            const srcRow = getRow(lastBlockFirstRow + sub);
+            if (!srcRow) continue;
+            const clonedRow = srcRow.cloneNode(true);
+            clonedRow.setAttribute('r', String(newFirstRow + sub + 1));
+            Array.from(clonedRow.getElementsByTagNameNS(XLSX_NS, 'c')).forEach(cellEl => {
+              const oldR = cellEl.getAttribute('r');
+              const colPart = oldR.replace(/[0-9]+$/, '');
+              cellEl.setAttribute('r', colPart + (newFirstRow + sub + 1));
+            });
+            sheetData.appendChild(clonedRow);
+          }
+          if (mergeCellsEl) {
+            [0, 1, 2, 3, 4, 11].forEach(c => {
+              const mc = xdoc.createElementNS(XLSX_NS, 'mergeCell');
+              mc.setAttribute('ref', cellAddr(newFirstRow, c) + ':' + cellAddr(newFirstRow + 2, c));
+              mergeCellsEl.appendChild(mc);
+              addedMerges++;
+            });
+          }
+        }
+        if (mergeCellsEl) {
+          mergeCellsEl.setAttribute('count', String(parseInt(mergeCellsEl.getAttribute('count'), 10) + addedMerges));
+        }
+      }
+
+      // 서명 이미지 삽입 준비 — startSignature/endSignature(base64 PNG, data: 접두사 없음)가
+      // 있는 학생만 해당 블록의 서명(시작 전)/서명(종료 후) 병합 셀(E열=4/L열=11, 0-based)에
+      // 이미지로 넣는다. 템플릿의 drawing1.xml은 빈 골격만 있어([Content_Types].xml에 png
+      // 미등록, drawing1.xml.rels도 없음) 실제 앵커/관계/미디어는 여기서 새로 만들어 채운다.
+      const SIG_COLS = { start: 4, end: 11 };
+      let imgCounter = 0;
+      let anchorXml = '';
+      const relEntries = [];
+
+      selected.forEach((s, i) => {
+        const blockFirstRow = 3 + 3 * i;
+        const extraSnap = extraSnaps[i];
+        const extra = extraSnap.exists() ? (extraSnap.data().fields || {}) : {};
+        setCellValue(blockFirstRow, 0, i + 1);
+        setCellValue(blockFirstRow, 1, s.name || '');
+        setCellValue(blockFirstRow, 2, extra['면허번호'] || '');
+        setCellValue(blockFirstRow, 3, extra['근무처명'] || '');
+
+        const times = (docGenCheckinMap && docGenCheckinMap[s.id]) || {};
+        for (let p = 1; p <= 9; p++) {
+          if (!times[p]) continue;
+          const subRow = (p - 1) % 3;
+          const periodCol = 5 + 2 * Math.floor((p - 1) / 3);
+          setCellValue(blockFirstRow + subRow, periodCol + 1, times[p]);
+        }
+
+        ['start', 'end'].forEach(kind => {
+          const sig = kind === 'start' ? s.startSignature : s.endSignature;
+          if (!sig) return; // 아직 서명 안 함 — 빈 칸 유지
+          imgCounter++;
+          const rId = `rId${imgCounter}`;
+          zip.file(`xl/media/image${imgCounter}.png`, sig, { base64: true });
+          relEntries.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${imgCounter}.png"/>`);
+          const fromCol = SIG_COLS[kind];
+          anchorXml += `<xdr:twoCellAnchor>` +
+            `<xdr:from><xdr:col>${fromCol}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${blockFirstRow}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>` +
+            `<xdr:to><xdr:col>${fromCol + 1}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${blockFirstRow + 3}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>` +
+            `<xdr:pic>` +
+              `<xdr:nvPicPr>` +
+                `<xdr:cNvPr id="${imgCounter}" name="Signature${imgCounter}"/>` +
+                `<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr>` +
+              `</xdr:nvPicPr>` +
+              `<xdr:blipFill><a:blip r:embed="${rId}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>` +
+              `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>` +
+            `</xdr:pic>` +
+            `<xdr:clientData/>` +
+          `</xdr:twoCellAnchor>`;
+        });
+      });
+
+      if (imgCounter > 0) {
+        // [Content_Types].xml에 png 확장자 등록(없으면)
+        const ctPath = '[Content_Types].xml';
+        let ctXml = await zip.file(ctPath).async('text');
+        if (!/Extension="png"/.test(ctXml)) {
+          ctXml = ctXml.replace('</Types>', '<Default Extension="png" ContentType="image/png"/></Types>');
+          zip.file(ctPath, ctXml);
+        }
+
+        // drawing1.xml — 빈 <xdr:wsDr .../> 자기닫힘 태그를 앵커들을 담은 여닫힘 태그로 교체
+        const drawingPath = 'xl/drawings/drawing1.xml';
+        let drawingXml = await zip.file(drawingPath).async('text');
+        drawingXml = drawingXml.replace(/\/>\s*$/, '>' + anchorXml + '</xdr:wsDr>');
+        zip.file(drawingPath, drawingXml);
+
+        // drawing1.xml.rels — 템플릿에 없던 파일이라 새로 생성
+        const relsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          relEntries.join('') +
+          '</Relationships>';
+        zip.file('xl/drawings/_rels/drawing1.xml.rels', relsXml);
+      }
+
+      const serializer = new XMLSerializer();
+      const newXml = serializer.serializeToString(xdoc);
+      zip.file(sheetPath, newXml);
+
+      const outBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(outBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${docGenSessionLabel || 'session'}_연수교육_참석자명단.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('문서 생성 실패: ' + e.message);
+    }
+  };
+
   // ── 로그인 상태 진입점 ──
   onAuthStateChanged(auth, async (user) => {
     // 가입 처리 중이면 doSignup이 admins 문서 저장까지 마치고 직접 대시보드로 진입시킨다
@@ -1062,8 +1361,22 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .qr-side-left{display:flex;flex-direction:column;gap:32px;width:240px;flex-shrink:0;}
 .qr-org-date{display:flex;flex-direction:column;gap:10px;}
 .org-name-big{font-size:28px;font-weight:800;color:var(--text);line-height:1.3;word-break:keep-all;}
-.qr-side-actions{display:flex;flex-direction:column;gap:14px;}
-.qr-side-actions .btn-primary{margin:0;padding:20px;font-size:17px;}
+.qr-side-actions{display:flex;flex-direction:column;gap:12px;}
+
+/* 이전/다음: 좌우 한 쌍. 다음(진행 방향)만 채움색으로 강조하고 이전은 연하게. */
+.nav-pair{display:flex;gap:8px;}
+.nav-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:14px 8px;border-radius:12px;font-size:14px;font-weight:800;cursor:pointer;border:1.5px solid var(--border);background:var(--surface);color:var(--muted);transition:all .15s ease;}
+.nav-btn:hover:not(:disabled){border-color:var(--brand);color:var(--brand);}
+.nav-btn:disabled{opacity:.4;cursor:not-allowed;}
+.nav-btn-next{background:var(--brand);border-color:var(--brand);color:#fff;}
+.nav-btn-next:hover:not(:disabled){background:var(--brand-dark);border-color:var(--brand-dark);color:#fff;}
+.nav-arrow{font-size:11px;opacity:.9;}
+
+/* 종료: 되돌리기 어려운 동작이라 색과 부제로 "서명까지 받는다"는 걸 분명히 드러낸다. */
+.end-btn{display:flex;flex-direction:column;align-items:center;gap:3px;padding:14px 10px;border-radius:12px;cursor:pointer;border:1.5px solid #fecaca;background:#fef2f2;color:#b91c1c;transition:all .15s ease;}
+.end-btn:hover{background:#fee2e2;border-color:#fca5a5;}
+.end-btn-main{font-size:15px;font-weight:800;}
+.end-btn-sub{font-size:11px;font-weight:700;opacity:.85;}
 .qr-card{background:var(--surface);border-radius:20px;padding:40px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;gap:22px;}
 #qr-canvas{border-radius:12px;min-width:520px;min-height:520px;display:flex;align-items:center;justify-content:center;}
 .qr-placeholder{font-size:20px;font-weight:700;color:var(--muted);}
@@ -1129,6 +1442,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .tot-num{font-size:11px;font-weight:800;color:var(--text);}
 .tot-gap{width:40px;flex-shrink:0;}
 .tot-line{width:6px;flex-shrink:0;}
+
+/* 문서생성 대상 선택 모달(qr-admin에서 가져온 마크업이 쓰는 클래스) */
+.modal-overlay{position:fixed;inset:0;background:rgba(17,24,39,0.5);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;}
+.modal-card{background:var(--surface);border-radius:18px;padding:26px;box-shadow:var(--shadow);width:100%;max-height:85vh;overflow-y:auto;}
 
 /* 교육종료 확인창 */
 .confirm-backdrop{position:fixed;inset:0;background:rgba(17,24,39,0.5);display:flex;align-items:center;justify-content:center;z-index:200;}
@@ -1210,12 +1527,22 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
       <div class="qr-side-left">
         <div class="qr-org-date">
           <div class="org-name-big" id="org-name-label">연수교육 QR 인증</div>
-          <input type="date" id="session-date" class="auth-input" style="width:100%;margin:0;font-size:22px;font-weight:800;padding:14px 18px;">
+          <input type="date" id="session-date" class="auth-input" style="width:100%;margin:0;font-size:22px;font-weight:800;padding:14px 18px;text-align:center;">
         </div>
         <div class="qr-side-actions">
-          <button class="btn-primary" id="btn-prev-period" onclick="switchToPeriod('prev')" disabled>◀ 이전 교시</button>
-          <button class="btn-primary" id="btn-start-period" onclick="handleNextPeriodClick()">교육시작</button>
-          <button class="btn-primary" id="btn-end-session" onclick="confirmEndSession()" style="display:none;">교육종료 + 서명</button>
+          <!-- 이전/다음은 방향 이동이라 좌우로 나란히, 종료는 성격이 다른 동작이라 아래 한 줄 -->
+          <div class="nav-pair">
+            <button class="nav-btn" id="btn-prev-period" onclick="switchToPeriod('prev')" disabled>
+              <span class="nav-arrow">◀</span><span class="nav-label">이전</span>
+            </button>
+            <button class="nav-btn nav-btn-next" id="btn-start-period" onclick="handleNextPeriodClick()">
+              <span class="nav-label">교육시작</span><span class="nav-arrow">▶</span>
+            </button>
+          </div>
+          <button class="end-btn" id="btn-end-session" onclick="confirmEndSession()" style="display:none;">
+            <span class="end-btn-main">교육 종료</span>
+            <span class="end-btn-sub">🏁 마지막 QR + 서명 받기</span>
+          </button>
         </div>
       </div>
       <div class="qr-card">
@@ -1287,7 +1614,13 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 
     <div class="hist-detail-card" style="max-width:900px;margin:24px auto 0;">
       <div style="font-size:18px;font-weight:800;color:var(--brand);margin-bottom:8px;">문서 자동생성</div>
-      <div class="hist-empty">준비중입니다.</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;">날짜를 고르고 불러오면 그날 참석자 중 원하는 사람만 선택해서 제출용 엑셀(서명 포함)을 받을 수 있습니다.</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <label class="auth-form-label" style="margin:0;">날짜</label>
+        <input type="date" id="docgen-date" class="auth-input" style="margin:0;width:auto;">
+        <button class="btn-primary" id="btn-open-docgen" onclick="openDocGenForDate()">명단 불러오기</button>
+      </div>
+      <div id="docgen-status" class="hist-empty" style="display:none;text-align:left;padding:10px 0 0;"></div>
     </div>
 
     <div class="hist-detail-card" style="max-width:900px;margin:24px auto 0;">
@@ -1306,6 +1639,22 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
       <button class="btn-primary confirm-cancel" onclick="closeEndConfirm()">취소</button>
       <button class="btn-primary" onclick="doEndSessionConfirmed()">종료 및 서명</button>
     </div>
+  </div>
+</div>
+
+<div id="doc-gen-modal" class="modal-overlay" style="display:none;">
+  <div class="auth-card modal-card" style="max-width:420px;text-align:left;">
+    <div class="auth-logo" style="margin-bottom:16px;">
+      <div class="auth-logo-title">문서생성 대상 선택</div>
+      <div class="auth-logo-sub" id="doc-gen-date-label"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+      <button type="button" onclick="toggleAllDocGenChecks(true)" style="background:transparent;border:none;color:var(--brand);font-size:13px;font-weight:700;cursor:pointer;">전체 선택</button>
+      <button type="button" onclick="toggleAllDocGenChecks(false)" style="background:transparent;border:none;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer;">전체 해제</button>
+    </div>
+    <div id="doc-gen-student-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:16px;"></div>
+    <button class="auth-btn auth-btn-primary" onclick="confirmDocGen()">문서생성</button>
+    <button class="auth-btn" style="background:transparent;border:1.5px solid var(--border);color:var(--muted);margin-top:8px;" onclick="closeDocGenModal()">취소</button>
   </div>
 </div>
 
