@@ -37,6 +37,10 @@
   let currentPeriod = null;
   let maxPeriod = 0;
   let isFinalPeriod = false;
+  // 타임라인에서 🏁(교육 종료) 지점을 그리려면 "몇 교시가 마지막인지" 번호 자체가 필요하다
+  // (isFinalPeriod는 "지금 보고 있는 교시가 마지막인가"만 알려줘서, 이전 교시로 이동하면
+  // 정보가 사라진다). 세션 문서의 finalPeriod를 그대로 들고 있는다.
+  let finalPeriodNum = null;
   let rotateInterval = null;
   let countdownInterval = null;
   let countdownSec = 5;
@@ -276,6 +280,7 @@
       currentPeriod = data.period;
       maxPeriod = data.maxPeriod || data.period;
       isFinalPeriod = !!final;
+      if (final) finalPeriodNum = data.period; // 세션 리스너가 곧 덮어쓰지만 즉시 반영해둔다
       renderPeriodTabs();
       renderPeriodCounts();
       document.getElementById('session-date').disabled = true;
@@ -353,6 +358,7 @@
       currentPeriod = null;
       maxPeriod = 0;
       isFinalPeriod = false;
+      finalPeriodNum = null;
       document.getElementById('qr-canvas').innerHTML = '<span class="qr-placeholder">시작 전</span>';
       document.getElementById('qr-countdown').textContent = '';
       document.getElementById('session-date').disabled = false;
@@ -377,6 +383,7 @@
       currentPeriod = data.currentPeriod;
       maxPeriod = data.maxPeriod || data.currentPeriod;
       isFinalPeriod = data.finalPeriod === data.currentPeriod;
+      finalPeriodNum = data.finalPeriod != null ? data.finalPeriod : null;
       renderPeriodTabs();
       renderPeriodCounts();
       document.getElementById('session-date').disabled = true;
@@ -410,6 +417,7 @@
       currentPeriod = data.currentPeriod;
       maxPeriod = data.maxPeriod || data.currentPeriod;
       isFinalPeriod = data.finalPeriod === data.currentPeriod;
+      finalPeriodNum = data.finalPeriod != null ? data.finalPeriod : null;
       renderPeriodTabs();
       renderPeriodCounts();
       updateEndSessionBtn();
@@ -760,7 +768,7 @@
     const container = document.getElementById('qr-canvas');
     container.innerHTML = '';
     const url = STUDENT_WEB_URL + '?scan=' + encodeURIComponent(payload);
-    new QRCode(container, { text: url, width: 440, height: 440, correctLevel: QRCode.CorrectLevel.M });
+    new QRCode(container, { text: url, width: 560, height: 560, correctLevel: QRCode.CorrectLevel.M });
   }
 
   function currentQrLabel(period, isFinal) {
@@ -772,21 +780,52 @@
     return `${period - 1}교시 종료\n${period}교시 시작`;
   }
 
+  // 교시 타임라인 — QR은 "교시 중"이 아니라 "교시와 교시 사이"에 찍는 것이라,
+  // 📷 스캔 지점과 교시 박스를 번갈아 세로로 그려서 그 의미를 시각화한다.
+  //   ( 📷 ) period 1  = 교육시작 전
+  //   [1교시]
+  //   ( 📷 ) period 2  = 1교시 종료 / 2교시 시작
+  //   [2교시] ...
+  // 현재 스캔 지점은 진하게+펄스, 지나간 지점은 흐리게, 각 지점에는 그 교시에
+  // 몇 명이 찍었는지 숫자 배지를 단다(기존 periodCounts 재사용).
   function renderPeriodTabs() {
-    document.getElementById('btn-start-period').textContent = currentPeriod ? '다음 교시 시작' : '교육시작';
+    document.getElementById('btn-start-period').textContent = currentPeriod ? '다음 교시 ▶' : '교육시작';
     const tabsEl = document.getElementById('period-tabs');
     const labelEl = document.getElementById('current-period-label');
     labelEl.style.display = 'block';
     labelEl.textContent = currentQrLabel(currentPeriod, isFinalPeriod);
     updatePrevNextButtons();
+
     if (!currentPeriod) {
-      tabsEl.innerHTML = '';
+      // 아직 시작 전 — 첫 스캔 지점만 흐리게 보여준다.
+      tabsEl.innerHTML = `
+        <div class="tl-dot-wrap">
+          <div class="tl-dot">📷</div>
+          <div class="tl-caption">교육시작 전</div>
+        </div>`;
       return;
     }
+
+    const lastPoint = Math.max(maxPeriod || 0, currentPeriod);
     let html = '';
-    for (let i = 1; i <= currentPeriod; i++) {
-      const finalBadge = (isFinalPeriod && i === currentPeriod) ? ' 🏁마지막' : '';
-      html += `<div class="period-tab${i === currentPeriod ? ' active' : ''}">${i}교시${finalBadge}</div>`;
+    for (let p = 1; p <= lastPoint; p++) {
+      const isFinalPoint = (finalPeriodNum != null && p === finalPeriodNum);
+      const cls = p === currentPeriod ? 'active' : (p < currentPeriod ? 'done' : '');
+      const icon = isFinalPoint ? '🏁' : '📷';
+      const count = periodCounts[p] || 0;
+      const badge = count > 0 ? `<div class="tl-dot-badge">${count}</div>` : '';
+      const caption = p === 1 ? '교육시작 전' : (isFinalPoint ? '교육 종료' : `${p - 1}교시 후`);
+      if (p > 1) html += '<div class="tl-line"></div>';
+      html += `
+        <div class="tl-dot-wrap">
+          <div class="tl-dot ${cls}">${icon}${badge}</div>
+          <div class="tl-caption">${caption}</div>
+        </div>`;
+      // 마지막(종료) 지점 뒤에는 수업이 없으므로 교시 박스를 그리지 않는다.
+      if (!isFinalPoint) {
+        html += '<div class="tl-line"></div>';
+        html += `<div class="tl-class">${p}교시</div>`;
+      }
     }
     tabsEl.innerHTML = html;
   }
@@ -801,6 +840,9 @@
     const sid = sessionId();
     if (rosterUnsub) rosterUnsub();
     rosterUnsub = onSnapshot(collection(db, 'sessions', sid, 'roster'), (snap) => {
+      // "아직 안 찍은 사람 = 오늘 명단 − 이번 교시 체크인"을 계산해야 해서 인원수만이
+      // 아니라 문서 전체(kakaoId/name/phone)를 들고 있는다.
+      rosterAll = snap.docs.map(d => ({ kakaoId: d.id, ...d.data() }));
       lastRosterSize = snap.size;
       updatePanelHeader();
     });
@@ -814,6 +856,7 @@
       try {
         const sid = sessionId();
         const snap = await getDocs(collection(db, 'sessions', sid, 'roster'));
+        rosterAll = snap.docs.map(d => ({ kakaoId: d.id, ...d.data() }));
         lastRosterSize = snap.size;
         updatePanelHeader();
       } catch (e) {
@@ -828,15 +871,57 @@
 
   let lastRosterSize = 0;
   let lastCheckinSize = 0;
+  let rosterAll = [];              // 오늘 한 번이라도 찍은 전체 명단
+  let checkedIdsThisPeriod = new Set(); // 이번 스캔 지점에서 찍은 kakaoId
 
-  function updatePanelHeader() {
-    const el = document.getElementById('roster-panel-header');
+  // 기존 호출부 호환용 래퍼 — 실제 렌더는 renderAttendancePanel이 전담한다.
+  function updatePanelHeader() { renderAttendancePanel(); }
+
+  function rosterItemHtml(p) {
+    return `<div class="roster-item"><span>${escapeHtml(maskName(p.name))}</span><span class="roster-phone">${escapeHtml(last4Phone(p.phone))}</span></div>`;
+  }
+
+  // 게이지 + "아직 안 찍은 분"(위 70%) + "체크 완료"(아래 30%).
+  // 안 찍은 사람 = 오늘 명단(roster) − 이번 교시 체크인. 첫 스캔 지점에서는 아직 아무도
+  // 명단에 없어서 비어 보이는 게 정상이고, 2교시부터 "나만 아직 안 찍었네"가 드러난다.
+  function renderAttendancePanel() {
+    const titleEl = document.getElementById('att-gauge-title');
+    const fillEl = document.getElementById('att-gauge-fill');
+    const numEl = document.getElementById('att-gauge-num');
+    const absentTitle = document.getElementById('att-absent-title');
+    const doneTitle = document.getElementById('att-done-title');
+    const absentList = document.getElementById('att-absent-list');
+    const doneList = document.getElementById('att-done-list');
+    if (!titleEl || !absentList) return;
+
+    titleEl.textContent = currentQrLabel(currentPeriod, isFinalPeriod);
+
     if (currentPeriod == null) {
-      el.innerHTML = `<div>오늘 수강생 ${lastRosterSize}명</div><div style="margin-top:6px;font-size:14px;font-weight:600;color:var(--muted);">이번 교시 체크 -</div>`;
+      fillEl.style.width = '0%';
+      numEl.textContent = `- / 오늘 ${lastRosterSize}명`;
+      absentTitle.textContent = '아직 안 찍은 분';
+      doneTitle.textContent = '체크 완료';
+      absentList.innerHTML = '<div class="roster-empty">교시를 시작하면 표시됩니다.</div>';
+      doneList.innerHTML = '<div class="roster-empty">-</div>';
       return;
     }
-    const absent = Math.max(lastRosterSize - lastCheckinSize, 0);
-    el.innerHTML = `<div>오늘 수강생 ${lastRosterSize}명</div><div style="margin-top:6px;font-size:14px;font-weight:600;color:var(--muted);">이번 교시 체크 ${lastCheckinSize}명 / 미체크 ${absent}명</div>`;
+
+    const done = rosterAll.filter(p => checkedIdsThisPeriod.has(String(p.kakaoId)));
+    const absent = rosterAll.filter(p => !checkedIdsThisPeriod.has(String(p.kakaoId)));
+    const total = rosterAll.length;
+    const pct = total ? Math.round((done.length / total) * 100) : 0;
+
+    fillEl.style.width = pct + '%';
+    numEl.textContent = `${done.length} / ${total}명 (${pct}%)`;
+    absentTitle.textContent = `아직 안 찍은 분 (${absent.length}명)`;
+    doneTitle.textContent = `체크 완료 (${done.length}명)`;
+
+    absentList.innerHTML = absent.length
+      ? absent.map(rosterItemHtml).join('')
+      : (total ? '<div class="roster-empty">전원 체크 완료 🎉</div>' : '<div class="roster-empty">아직 찍은 분이 없습니다.</div>');
+    doneList.innerHTML = done.length
+      ? done.map(rosterItemHtml).join('')
+      : '<div class="roster-empty">-</div>';
   }
 
   function maskName(name) {
@@ -848,29 +933,16 @@
     const digits = String(phone || '').replace(/\D/g, '');
     return digits.length >= 4 ? digits.slice(-4) : digits;
   }
-  function renderRosterPanel(list) {
-    const listEl = document.getElementById('roster-panel-list');
-    if (!list.length) {
-      listEl.innerHTML = '<div class="roster-empty">아직 체크한 학생이 없습니다.</div>';
-      return;
-    }
-    listEl.innerHTML = list.map(c =>
-      `<div class="roster-item"><span>${escapeHtml(maskName(c.name))}</span><span class="roster-phone">${escapeHtml(last4Phone(c.phone))}</span></div>`
-    ).join('');
-  }
-
   function resubscribeCheckins() {
     if (checkinsUnsub) { checkinsUnsub(); checkinsUnsub = null; }
-    if (currentPeriod == null) { renderRosterPanel([]); return; }
+    if (currentPeriod == null) { checkedIdsThisPeriod = new Set(); renderAttendancePanel(); return; }
     const sid = sessionId();
     const q = query(collection(db, 'sessions', sid, 'checkins'), where('period', '==', currentPeriod));
     checkinsUnsub = onSnapshot(q, (snap) => {
       lastCheckinSize = snap.size;
-      updatePanelHeader();
+      checkedIdsThisPeriod = new Set(snap.docs.map(d => String(d.data().kakaoId)));
       renderPeriodCounts();
-      const list = [];
-      snap.forEach(d => list.push(d.data()));
-      renderRosterPanel(list);
+      renderAttendancePanel();
     });
   }
 
@@ -890,15 +962,10 @@
     });
   }
 
+  // 교시별 인원수는 이제 타임라인 📷 동그라미의 숫자 배지로 보여주므로, 별도 목록 줄
+  // (#period-counts)은 없앴다. 호출부가 여러 곳이라 함수는 남겨두고 타임라인을 다시 그린다.
   function renderPeriodCounts() {
-    const el = document.getElementById('period-counts');
-    if (!el) return;
-    if (currentPeriod == null) { el.innerHTML = ''; return; }
-    let html = '';
-    for (let p = 1; p <= currentPeriod; p++) {
-      html += `<span>${p}교시 ${periodCounts[p] || 0}명</span>`;
-    }
-    el.innerHTML = html;
+    renderPeriodTabs();
   }
 
   // ── 로그인 상태 진입점 ──
@@ -975,8 +1042,9 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .org-load-hint{font-size:12px;color:var(--muted);margin:-8px 0 12px 2px;}
 
 /* ── TOP BAR ── */
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;}
-.topbar-title{font-size:18px;font-weight:800;color:var(--brand);letter-spacing:-0.02em;}
+.topbar{position:relative;display:flex;align-items:center;justify-content:flex-end;padding:14px 28px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;}
+/* 기관명은 로그아웃 버튼 유무와 상관없이 화면 정중앙에 오도록 절대배치한다. */
+.topbar-title{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:20px;font-weight:800;color:var(--brand);letter-spacing:-0.02em;white-space:nowrap;}
 .btn-logout{background:transparent;border:1.5px solid var(--border);color:var(--muted);padding:8px 16px;border-radius:var(--pill);cursor:pointer;font-size:13px;font-weight:600;transition:.15s;}
 .btn-logout:hover{border-color:var(--brand);color:var(--brand);}
 
@@ -994,15 +1062,49 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .btn-primary{background:var(--brand);color:#fff;border:none;padding:14px 32px;border-radius:var(--pill);font-size:15px;font-weight:700;cursor:pointer;transition:.15s;}
 .btn-primary:hover{background:var(--brand-dark);}
 .btn-primary:disabled{opacity:.5;cursor:not-allowed;}
-.qr-body{display:flex;align-items:center;gap:16px;}
-.period-tabs{display:flex;flex-direction:column;gap:6px;max-height:440px;overflow-y:auto;}
-.period-tab{padding:10px 18px;border-radius:10px;font-size:14px;font-weight:800;text-align:center;background:#fff;color:var(--text);border:1.5px solid var(--border);white-space:nowrap;}
-.period-tab.active{background:var(--brand);color:#fff;border-color:var(--brand);}
+.qr-body{display:flex;align-items:center;gap:20px;}
+
+/* ── 교시 타임라인 ─────────────────────────────────────────────
+   QR은 "교시 중"이 아니라 "교시와 교시 사이"에 찍는 것이라, 교시 박스와
+   📷 스캔 지점을 번갈아 세로로 배치해 그 의미가 한눈에 보이게 한다.
+   period N = (N-1)교시와 N교시 사이의 스캔 지점(period 1 = 교육시작 전). */
+.period-tabs{display:flex;flex-direction:column;align-items:center;gap:0;max-height:560px;overflow-y:auto;padding:4px 2px;}
+.tl-dot{position:relative;width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;border:2px dashed var(--border);background:#fff;color:var(--muted);flex-shrink:0;}
+.tl-dot.done{border-style:solid;border-color:#c7d2fe;background:#eef2ff;color:#6366f1;}
+.tl-dot.active{border-style:solid;border-color:var(--brand);background:var(--brand);color:#fff;width:66px;height:66px;font-size:28px;box-shadow:0 0 0 6px rgba(108,99,255,0.18);animation:tlPulse 1.8s ease-in-out infinite;}
+@keyframes tlPulse{0%,100%{box-shadow:0 0 0 6px rgba(108,99,255,0.18);}50%{box-shadow:0 0 0 12px rgba(108,99,255,0.08);}}
+.tl-dot-badge{position:absolute;right:-6px;bottom:-4px;min-width:22px;height:22px;padding:0 5px;border-radius:11px;background:var(--text);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #fff;}
+.tl-dot.active .tl-dot-badge{background:#111827;}
+.tl-line{width:2px;height:14px;background:var(--border);flex-shrink:0;}
+.tl-class{padding:8px 20px;border-radius:10px;font-size:14px;font-weight:800;text-align:center;background:var(--canvas);color:var(--muted);border:1.5px solid var(--border);white-space:nowrap;flex-shrink:0;}
+.tl-caption{font-size:11px;font-weight:700;color:var(--muted);margin-top:4px;text-align:center;white-space:nowrap;}
+.tl-dot-wrap{display:flex;flex-direction:column;align-items:center;}
+
+.period-nav{display:flex;gap:10px;align-items:stretch;}
+.period-nav .btn-primary{margin:0;}
 
 /* ── ROSTER PANEL ── */
-.roster-panel{background:var(--surface);border-radius:20px;padding:24px;box-shadow:var(--shadow);width:340px;flex-shrink:0;display:flex;flex-direction:column;}
-.roster-panel-header{font-size:18px;font-weight:800;color:var(--brand);margin-bottom:14px;text-align:center;}
-.roster-panel-list{overflow-y:auto;display:flex;flex-direction:column;gap:6px;flex:1;}
+.roster-panel{background:var(--surface);border-radius:20px;padding:24px;box-shadow:var(--shadow);width:360px;flex-shrink:0;display:flex;flex-direction:column;gap:14px;}
+
+/* ── 출석 현황 패널 ───────────────────────────────────────────
+   주인공은 "아직 안 찍은 사람" — 학생이 이 화면을 보고 본인이 아직
+   안 찍었다는 걸 스스로 알아채게 하는 게 목적이라 위쪽 70%를 준다.
+   두 목록 모두 각자 고정 높이 안에서만 스크롤되게 해서, 인원이 많아져도
+   패널이 세로로 늘어나지 않게 한다. */
+.att-gauge{flex-shrink:0;}
+.att-gauge-title{font-size:15px;font-weight:800;color:var(--brand);text-align:center;white-space:pre-line;line-height:1.35;}
+.att-gauge-bar{height:12px;border-radius:6px;background:var(--canvas);border:1px solid var(--border);overflow:hidden;margin-top:10px;}
+.att-gauge-fill{height:100%;background:linear-gradient(90deg,var(--brand),#8b84ff);border-radius:6px;transition:width .35s ease;}
+.att-gauge-num{font-size:13px;font-weight:800;color:var(--text);text-align:center;margin-top:6px;}
+.att-section{display:flex;flex-direction:column;min-height:0;}
+.att-section-absent{flex:7;}
+.att-section-done{flex:3;}
+.att-section-title{font-size:14px;font-weight:800;margin-bottom:8px;flex-shrink:0;}
+.att-section-absent .att-section-title{color:#c2410c;}
+.att-section-done .att-section-title{color:var(--muted);}
+.att-list{overflow-y:auto;display:flex;flex-direction:column;gap:6px;flex:1;min-height:60px;padding-right:2px;}
+.att-section-absent .roster-item{background:#fff7ed;border:1px solid #fed7aa;}
+.att-section-done .roster-item{opacity:.75;}
 .roster-item{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--canvas);border-radius:8px;font-size:14px;font-weight:600;}
 .roster-phone{color:var(--muted);font-weight:700;font-size:13px;}
 .roster-empty{font-size:13px;color:var(--muted);text-align:center;padding:20px;}
@@ -1083,15 +1185,31 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
           </div>
           <div class="qr-countdown" id="qr-countdown"></div>
         </div>
-        <button class="btn-primary" id="btn-prev-period" onclick="switchToPeriod('prev')" disabled>◀ 이전 교시</button>
-        <button class="btn-primary" id="btn-start-period" onclick="handleNextPeriodClick()">교육시작</button>
+        <div class="period-nav">
+          <button class="btn-primary" id="btn-prev-period" onclick="switchToPeriod('prev')" disabled>◀ 이전 교시</button>
+          <button class="btn-primary" id="btn-start-period" onclick="handleNextPeriodClick()">교육시작</button>
+        </div>
         <button class="btn-primary" id="btn-end-session" onclick="startNextPeriod(true)" style="display:none;">교육 종료 QR 및 서명</button>
       </div>
       <div class="roster-panel">
-        <div class="roster-panel-header" id="roster-panel-header"><div>오늘 수강생 0명</div><div style="margin-top:6px;font-size:14px;font-weight:600;color:var(--muted);">이번 교시 체크 -</div></div>
-        <div id="period-counts" style="display:flex;flex-wrap:wrap;gap:6px 12px;justify-content:center;font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;"></div>
-        <div class="roster-panel-list" id="roster-panel-list">
-          <div class="roster-empty">교시를 시작하면 표시됩니다.</div>
+        <!-- 게이지: 이번 스캔 지점(교시와 교시 사이)에서 몇 명이 찍었는지 -->
+        <div class="att-gauge">
+          <div class="att-gauge-title" id="att-gauge-title">교시 미시작</div>
+          <div class="att-gauge-bar"><div class="att-gauge-fill" id="att-gauge-fill" style="width:0%"></div></div>
+          <div class="att-gauge-num" id="att-gauge-num">- / -</div>
+        </div>
+        <!-- 위 70%: 아직 안 찍은 사람(주인공). 아래 30%: 이미 찍은 사람 -->
+        <div class="att-section att-section-absent">
+          <div class="att-section-title" id="att-absent-title">아직 안 찍은 분</div>
+          <div class="att-list" id="att-absent-list">
+            <div class="roster-empty">교시를 시작하면 표시됩니다.</div>
+          </div>
+        </div>
+        <div class="att-section att-section-done">
+          <div class="att-section-title" id="att-done-title">체크 완료</div>
+          <div class="att-list" id="att-done-list">
+            <div class="roster-empty">-</div>
+          </div>
         </div>
       </div>
     </div>
