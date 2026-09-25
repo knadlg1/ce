@@ -112,7 +112,13 @@
   async function enterDashboard() {
     document.getElementById('auth-wrap').style.display = 'none';
     document.getElementById('dashboard').style.display = 'flex';
-    document.getElementById('org-name-label').textContent = orgName || '연수교육 QR 인증';
+    const orgLabel = document.getElementById('org-name-label');
+    orgLabel.textContent = orgName || '연수교육 QR 인증';
+    // 기관명 길이가 제각각이라(짧게는 5자, 길게는 15자 이상) 한 크기로 고정하면 긴 이름이
+    // 좌측 칸(380px)을 넘어 QR을 가린다. 글자 수에 맞춰 단계적으로 줄여 두 줄 안에 맞춘다.
+    const nameLen = orgLabel.textContent.replace(/\s/g, '').length;
+    orgLabel.style.fontSize =
+      (nameLen <= 7 ? 56 : nameLen <= 10 ? 46 : nameLen <= 14 ? 38 : 31) + 'px';
     document.getElementById('session-date').value = todayKST();
     const docgenDate = document.getElementById('docgen-date');
     if (docgenDate && !docgenDate.value) docgenDate.value = todayKST();
@@ -345,7 +351,7 @@
     const main = btn.querySelector('.end-btn-main');
     const sub = btn.querySelector('.end-btn-sub');
     if (main) main.textContent = isFinalPeriod ? '교육 종료됨' : '교육 종료';
-    if (sub) sub.textContent = isFinalPeriod ? '마지막 QR 표시 중' : '🏁 마지막 QR + 서명 받기';
+    if (sub) sub.textContent = isFinalPeriod ? '마지막 QR 표시 중' : '마지막 QR + 서명';
   }
 
   window.endSession = async function () {
@@ -777,13 +783,9 @@
     const points = [];
     for (let p = 1; p <= lastPoint; p++) {
       const isFinalPoint = (finalPeriodNum != null && p === finalPeriodNum);
-      let cls = '';
-      if (p === currentPeriod) {
-        // 최종 지점(🏁)은 'active', 카메라(📷)는 'active-camera'
-        cls = isFinalPoint ? 'active' : 'active-camera';
-      } else if (p < currentPeriod) {
-        cls = 'done';
-      }
+      // 지금 찍어야 할 지점은 'active'(보라색 강조)에 'now'를 덧붙인다 — 'now'가
+      // 큰 타임라인에서만 빨간 화살표를 띄워 "이 QR을 찍는 중"임을 가리킨다.
+      const cls = p === currentPeriod ? 'active now' : (p < currentPeriod ? 'done' : '');
       points.push({
         p,
         isFinalPoint,
@@ -1365,25 +1367,30 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 
 /* ── QR PAGE ── */
 .qr-wrap{display:flex;gap:24px;align-items:stretch;justify-content:center;}
-.qr-side-left{display:flex;flex-direction:column;gap:32px;width:240px;flex-shrink:0;}
+/* 학생들이 멀리서 보는 화면이라 글자/버튼을 크게 키웠다. 그만큼 폭이 필요해
+   240px -> 380px, 그리고 QR 박스와 눈높이가 맞도록 세로 가운데 정렬한다. */
+.qr-side-left{display:flex;flex-direction:column;justify-content:center;gap:28px;width:380px;flex-shrink:0;}
 .qr-org-date{display:flex;flex-direction:column;gap:10px;}
-.org-name-big{font-size:56px;font-weight:800;color:var(--text);line-height:1.3;word-break:keep-all;}
+/* 띄어쓰기 없는 긴 한글 기관명은 keep-all만으론 한 덩어리라 안 쪼개져 칸을 넘는다.
+   anywhere를 같이 줘서 어쩔 수 없을 때는 글자 단위로 줄바꿈되게 한다.
+   실제 크기는 enterDashboard()에서 이름 길이에 맞춰 다시 정한다. */
+.org-name-big{font-size:56px;font-weight:800;color:var(--text);line-height:1.2;word-break:keep-all;overflow-wrap:anywhere;}
 .qr-side-actions{display:flex;flex-direction:column;gap:12px;}
 
 /* 이전/다음: 좌우 한 쌍. 다음(진행 방향)만 채움색으로 강조하고 이전은 연하게. */
 .nav-pair{display:flex;gap:8px;}
-.nav-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:28px 16px;border-radius:12px;font-size:28px;font-weight:800;cursor:pointer;border:1.5px solid var(--border);background:var(--surface);color:var(--muted);transition:all .15s ease;}
+.nav-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:24px 8px;border-radius:14px;font-size:26px;font-weight:800;white-space:nowrap;cursor:pointer;border:2px solid var(--border);background:var(--surface);color:var(--muted);transition:all .15s ease;}
 .nav-btn:hover:not(:disabled){border-color:var(--brand);color:var(--brand);}
 .nav-btn:disabled{opacity:.4;cursor:not-allowed;}
 .nav-btn-next{background:var(--brand);border-color:var(--brand);color:#fff;}
 .nav-btn-next:hover:not(:disabled){background:var(--brand-dark);border-color:var(--brand-dark);color:#fff;}
-.nav-arrow{font-size:11px;opacity:.9;}
+.nav-arrow{font-size:18px;opacity:.9;}
 
 /* 종료: 되돌리기 어려운 동작이라 색과 부제로 "서명까지 받는다"는 걸 분명히 드러낸다. */
-.end-btn{display:flex;flex-direction:column;align-items:center;gap:3px;padding:28px 20px;border-radius:12px;cursor:pointer;border:1.5px solid #fecaca;background:#fef2f2;color:#b91c1c;transition:all .15s ease;}
+.end-btn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:24px 16px;border-radius:14px;cursor:pointer;border:2px solid #fecaca;background:#fef2f2;color:#b91c1c;transition:all .15s ease;}
 .end-btn:hover{background:#fee2e2;border-color:#fca5a5;}
-.end-btn-main{font-size:30px;font-weight:800;}
-.end-btn-sub{font-size:9px;font-weight:700;opacity:.85;}
+.end-btn-main{font-size:30px;font-weight:800;line-height:1.2;}
+.end-btn-sub{font-size:19px;font-weight:700;opacity:.9;line-height:1.2;}
 .qr-card{background:var(--surface);border-radius:20px;padding:40px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;gap:22px;}
 #qr-canvas{border-radius:12px;min-width:520px;min-height:520px;display:flex;align-items:center;justify-content:center;}
 .qr-placeholder{font-size:20px;font-weight:700;color:var(--muted);}
@@ -1399,14 +1406,18 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
    교시 박스를 번갈아 가로로 배치해 그 의미가 한눈에 보이게 한다.
    period N = (N-1)교시와 N교시 사이의 스캔 지점(period 1 = 교육시작 전).
    같은 마크업을 오른쪽 패널에서도 compact 크기로 재사용한다. */
-.tl-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:0;overflow-x:auto;padding:4px 2px;max-width:100%;}
+/* 위쪽 여백은 현재 지점을 가리키는 빨간 화살표(.tl-dot.now::after)가 들어갈 자리다. */
+.tl-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:0;overflow-x:auto;padding:48px 2px 4px;max-width:100%;}
+.tl-row.compact{padding:4px 2px;}
 .tl-dot{position:relative;width:62px;height:62px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;border:2px dashed var(--border);background:#fff;color:var(--muted);flex-shrink:0;}
 .tl-dot.done{border-style:solid;border-color:#c7d2fe;background:#eef2ff;color:#6366f1;}
 .tl-dot.active{border-style:solid;border-color:var(--brand);background:var(--brand);color:#fff;box-shadow:0 0 0 5px rgba(108,99,255,0.18);animation:tlPulse 1.8s ease-in-out infinite;}
-.tl-dot.active-camera{border-style:solid;border-color:var(--border);background:#fff;color:var(--muted);position:relative;}
-.tl-dot.active-camera::before{content:'↓';position:absolute;top:-16px;left:50%;transform:translateX(-50%);color:#ef4444;font-size:18px;font-weight:bold;animation:cameraArrowBounce 1s ease-in-out infinite;}
 @keyframes tlPulse{0%,100%{box-shadow:0 0 0 5px rgba(108,99,255,0.18);}50%{box-shadow:0 0 0 11px rgba(108,99,255,0.08);}}
-@keyframes cameraArrowBounce{0%{transform:translateX(-50%) translateY(0);}50%{transform:translateX(-50%) translateY(-8px);}100%{transform:translateX(-50%) translateY(0);}}
+/* 지금 찍는 지점을 가리키는 빨간 화살표. 오른쪽 패널의 축소 타임라인에서는
+   위아래 행과 겹쳐서 오히려 읽기 어려워지므로 큰 타임라인에서만 띄운다. */
+.tl-dot.now::after{content:'▼';position:absolute;bottom:calc(100% + 10px);left:50%;color:#ef4444;font-size:26px;font-weight:900;line-height:1;text-shadow:0 1px 2px rgba(0,0,0,.15);animation:tlArrowBounce 1s ease-in-out infinite;}
+.tl-row.compact .tl-dot.now::after{display:none;}
+@keyframes tlArrowBounce{0%,100%{transform:translate(-50%,0);}50%{transform:translate(-50%,-10px);}}
 .tl-dot-badge{position:absolute;right:-5px;bottom:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--text);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #fff;}
 .tl-line{height:2px;width:12px;background:var(--border);flex-shrink:0;}
 .tl-class{width:56px;padding:8px 0;border-radius:10px;font-size:13px;font-weight:800;text-align:center;background:var(--canvas);color:var(--muted);border:1.5px solid var(--border);white-space:nowrap;flex-shrink:0;}
@@ -1551,7 +1562,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
           </div>
           <button class="end-btn" id="btn-end-session" onclick="confirmEndSession()" style="display:none;">
             <span class="end-btn-main">교육 종료</span>
-            <span class="end-btn-sub">🏁 마지막 QR + 서명 받기</span>
+            <span class="end-btn-sub">마지막 QR + 서명</span>
           </button>
         </div>
       </div>

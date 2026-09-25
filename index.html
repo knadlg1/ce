@@ -351,17 +351,26 @@
       const data = await res.json();
       // 성공/실패(duplicate 포함) 공통 — QR payload의 세션 id는 어느 쪽이든 최신 상태를
       // 다시 가져오는 데 필요하다(mobile-app QrMainScreen.js와 동일한 이유).
-      let sid = null;
-      try { const parsed = JSON.parse(payload); if (parsed && parsed.s) sid = parsed.s; } catch {}
+      let sid = null, scannedPeriod = null;
+      try {
+        const parsed = JSON.parse(payload);
+        if (parsed && parsed.s) sid = parsed.s;
+        if (parsed && parsed.p) scannedPeriod = Number(parsed.p);
+      } catch {}
       if (sid) setCurrentSessionId(sid);
 
       if (data.success) {
-        let msg = '출석 체크 완료!';
-        try { const parsed = JSON.parse(payload); if (parsed && parsed.p) msg = `✅ ${parsed.p}교시 출석 체크 완료!`; } catch {}
-        showToast(msg, 'success');
+        showToast(scannedPeriod ? `✅ ${scannedPeriod}교시 출석 체크 완료!` : '출석 체크 완료!', 'success');
         await loadCheckins();
+        // 배열 순서가 아니라 방금 찍은 교시로 집어야 정확하다(구제승인 등으로 순서가 어긋날 수 있다).
+        popupForPeriod(scannedPeriod, 'success');
         await loadRosterStatus();
         await loadSchedule();
+      } else if (data.duplicate) {
+        // 같은 QR을 또 찍은 경우 — 언제 인정됐는지까지 보여줘야 학생이 안심한다.
+        await loadCheckins();
+        popupForPeriod(scannedPeriod, 'duplicate');
+        await loadRosterStatus();
       } else {
         showToast(data.message || '출석 체크에 실패했습니다.', 'error');
         await loadRosterStatus();
@@ -372,6 +381,17 @@
       showLoading(false);
       scanLocked = false;
     }
+  }
+
+  // 방금 찍은 교시의 체크인 시각을 찾아 결과 팝업을 띄운다(성공/중복 공통).
+  function popupForPeriod(period, kind) {
+    const c = checkins.find(x => x.period === period);
+    if (!c || !c.checkedAt) return;
+    const d = c.checkedAt.toDate ? c.checkedAt.toDate() : new Date(c.checkedAt);
+    if (isNaN(d.getTime())) return;
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    showTimePopup(`${hh}:${mm}`, period, kind);
   }
 
   // ── 체크인 목록 ──
@@ -415,11 +435,12 @@
       const timeText = c
         ? `${fmtCheckedAt(c.checkedAt)}${c.makeupApproved ? ' (서명출석)' : ''}`
         : '미체크';
+      const isProgress = p <= maxChecked;
       html += `<div class="tl-dot${c ? ' done' : ''}">📷<span class="tl-time${c ? '' : ' tl-time-muted'}">${timeText}</span></div>`;
       if (p < lastPoint) {
-        html += '<div class="tl-vline"></div>';
-        html += `<div class="tl-class">${p}교시</div>`;
-        html += '<div class="tl-vline"></div>';
+        html += `<div class="tl-vline${isProgress ? ' progress' : ''}"></div>`;
+        html += `<div class="tl-class${isProgress ? ' progress' : ''}">${p}교시</div>`;
+        html += `<div class="tl-vline${isProgress && p === maxChecked ? ' progress' : ''}"></div>`;
       }
     }
     el.innerHTML = html;
@@ -622,7 +643,7 @@
     `).join('');
   }
 
-  // ── 토스트/로딩 ──
+  // ── 토스트/로딩/시간팝업 ──
   let toastTimer = null;
   function showToast(message, type) {
     const el = document.getElementById('toast');
@@ -631,6 +652,28 @@
     el.hidden = false;
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { el.hidden = true; }, 2500);
+  }
+
+  let timePopupTimer = null;
+  // period p의 스캔 지점은 "(p-1)교시와 p교시 사이" — p=1이면 교육 시작 전이다.
+  function scanPointLabel(p) {
+    if (!p) return '출석';
+    return p === 1 ? '교육 시작 전' : `${p - 1}교시 완료`;
+  }
+  function showTimePopup(timeText, period, kind) {
+    const el = document.getElementById('time-popup');
+    document.getElementById('time-popup-where').textContent = scanPointLabel(period);
+    document.getElementById('time-popup-text').textContent = timeText;
+    document.getElementById('time-popup-note').textContent =
+      kind === 'duplicate' ? '이미 처리 된 QR입니다' : '출석 인정되었습니다';
+    el.classList.toggle('dup', kind === 'duplicate');
+    el.hidden = false;
+    el.classList.remove('time-popup-show');
+    if (timePopupTimer) clearTimeout(timePopupTimer);
+    // 연속 스캔 시 애니메이션을 처음부터 다시 재생시키기 위한 강제 리플로우
+    void el.offsetWidth;
+    el.classList.add('time-popup-show');
+    timePopupTimer = setTimeout(() => { el.hidden = true; }, 2200);
   }
 
   function showLoading(v) {
@@ -709,7 +752,9 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .tl-dot{position:relative;width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;border:2px dashed var(--border);background:#fff;color:var(--muted);flex-shrink:0;}
 .tl-dot.done{border-style:solid;border-color:#c7d2fe;background:#eef2ff;color:#6366f1;}
 .tl-vline{width:2px;height:14px;background:var(--border);margin-left:25px;}
+.tl-vline.progress{background:var(--brand);}
 .tl-class{width:52px;margin-left:4px;padding:8px 0;border-radius:10px;font-size:12px;font-weight:800;text-align:center;background:var(--canvas);color:var(--muted);border:1.5px solid var(--border);}
+.tl-class.progress{background:var(--brand-xlight);color:var(--brand);border-color:var(--brand);}
 .tl-time{position:absolute;left:64px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;}
 .tl-time-muted{color:var(--muted);font-weight:600;}
 
@@ -743,6 +788,16 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#111827;color:#fff;padding:12px 20px;border-radius:var(--pill);font-size:13px;font-weight:600;z-index:500;max-width:88vw;text-align:center;}
 .toast-error{background:#B91C1C;}
 .toast-success{background:#16a34a;}
+
+/* ── 시간 팝업 애니메이션 ── */
+.time-popup{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--brand);color:#fff;padding:26px 40px;border-radius:20px;z-index:600;pointer-events:none;opacity:0;box-shadow:0 18px 50px rgba(0,0,0,.28);text-align:center;}
+.time-popup.dup{background:#b91c1c;}
+.time-popup-where{font-size:17px;font-weight:700;opacity:.9;margin-bottom:2px;}
+.time-popup-text{font-size:56px;font-weight:800;letter-spacing:-0.02em;line-height:1.1;}
+.time-popup-note{font-size:15px;font-weight:700;opacity:.9;margin-top:4px;}
+/* 2.2s는 showTimePopup()의 숨김 타이머와 맞춘 값이다(둘이 어긋나면 빈 상자가 남는다). */
+.time-popup.time-popup-show{animation:timePopupAnimate 2.2s ease-in-out forwards;}
+@keyframes timePopupAnimate{0%{opacity:0;transform:translate(-50%,-50%) scale(0.7);}12%{opacity:1;transform:translate(-50%,-50%) scale(1.06);}20%{transform:translate(-50%,-50%) scale(1);}85%{opacity:1;transform:translate(-50%,-50%) scale(1);}100%{opacity:0;transform:translate(-50%,-50%) scale(0.9);}}
 </style>
 </head>
 <body>
@@ -845,6 +900,14 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 </div>
 
 <div id="toast" class="toast" hidden></div>
+
+<!-- 스캔 직후 결과를 크게 띄운다. 일반 카메라로 찍으면 처리가 순식간이라
+     제대로 찍혔는지 알기 어려워서, 시각뿐 아니라 "어느 지점을 찍었는지"까지 보여준다. -->
+<div id="time-popup" class="time-popup" hidden>
+  <div class="time-popup-where" id="time-popup-where">1교시 전</div>
+  <div class="time-popup-text" id="time-popup-text">09:30</div>
+  <div class="time-popup-note" id="time-popup-note">출석 인정</div>
+</div>
 
 </body>
 </html>
