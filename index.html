@@ -445,9 +445,9 @@
 
     const cell = (p) => {
       const c = checkins.find(x => x.period === p);
-      if (!c) return '<div class="ck-cell"><span class="ck-cam">📷</span><span class="ck-time ck-time-muted">미체크</span></div>';
+      if (!c) return '<div class="ck-cell"><span class="ck-cam">📷</span><span class="ck-time">미체크</span></div>';
       const extra = c.makeupApproved ? '<br>(서명출석)' : '';
-      return `<div class="ck-cell"><span class="ck-cam done">📷</span><span class="ck-time">${fmtCheckedAtShort(c.checkedAt)}${extra}</span></div>`;
+      return `<div class="ck-cell done"><span class="ck-cam">📷</span><span class="ck-time">${fmtCheckedAtShort(c.checkedAt)}${extra}</span></div>`;
     };
 
     let html = '';
@@ -765,20 +765,22 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .empty-text{font-size:13px;color:var(--muted);}
 
 /* ── 출석현황 세로 타임라인(관리자 화면 .tl-* 디자인을 세로로 변형) ── */
-.ck-table{display:flex;flex-direction:column;}
+.ck-table{display:flex;flex-direction:column;gap:6px;}
 /* 출석현황 — 교시당 한 행: [찍은시각] - N교시 - [찍은시각].
-   양옆 칸은 각각 그 교시의 앞/뒤 스캔 지점이고, 가운데가 교시다. */
-.ck-row{display:grid;grid-template-columns:1fr 12px 54px 12px 1fr;align-items:stretch;border-top:1px solid var(--border);}
-.ck-row:last-child{border-bottom:1px solid var(--border);}
-.ck-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:9px 4px;min-width:0;}
-.ck-cam{font-size:19px;line-height:1;filter:grayscale(1);opacity:.45;}
-.ck-cam.done{filter:none;opacity:1;}
-.ck-time{font-size:12px;font-weight:700;color:var(--text);text-align:center;line-height:1.3;word-break:keep-all;}
-.ck-time-muted{color:var(--muted);font-weight:600;}
-.ck-dash{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;}
-.ck-period{display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--muted);background:var(--canvas);border-left:1px solid var(--border);border-right:1px solid var(--border);}
+   양옆 칸은 각각 그 교시의 앞/뒤 스캔 지점이고, 가운데가 교시다.
+   찍힌 칸은 QR 스캔 버튼(.qr-scan-btn)과 같은 연보라 배경/테두리로 칠해
+   "이건 내가 찍은 것"이 같은 색 언어로 읽히게 한다. */
+.ck-row{display:grid;grid-template-columns:1fr 10px 52px 10px 1fr;align-items:stretch;gap:5px;}
+.ck-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:10px 6px;min-width:0;border-radius:14px;border:1.5px solid var(--border);background:#fafafc;}
+.ck-cell.done{background:#ede9fe;border-color:#c4b5fd;}
+.ck-cam{font-size:20px;line-height:1;filter:grayscale(1);opacity:.4;}
+.ck-cell.done .ck-cam{filter:none;opacity:1;}
+.ck-time{font-size:12px;font-weight:700;color:var(--muted);text-align:center;line-height:1.3;word-break:keep-all;}
+.ck-cell.done .ck-time{color:var(--brand);}
+.ck-dash{display:flex;align-items:center;justify-content:center;color:var(--border);font-size:12px;font-weight:800;}
+.ck-period{display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--muted);background:#fafafc;border:1.5px solid var(--border);border-radius:14px;}
 /* 앞뒤를 다 찍어 인정된 교시만 색을 채운다 — 어디까지 인정됐는지 한눈에 보이도록. */
-.ck-period.done{background:var(--brand-xlight);color:var(--brand);}
+.ck-period.done{background:#ede9fe;border-color:#c4b5fd;color:var(--brand);}
 
 .schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--canvas);}
 .schedule-row:last-child{border-bottom:none;}
