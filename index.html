@@ -700,16 +700,16 @@
 @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap');
 
 :root {
-  --brand: #6c63ff;
-  --brand-dark: #5651d5;
-  --brand-xlight: #ede9fe;
-  --canvas: #f4f5f7;
+  --brand: #5a5ac4;
+  --brand-dark: #45469e;
+  --brand-xlight: #ece5fb;
+  --canvas: #e0d7fb;
   --surface: #FFFFFF;
-  --border: #E5E7EB;
-  --text: #111827;
-  --muted: #6B7280;
+  --border: #ddd5ee;
+  --text: #1b1b1b;
+  --muted: #6b6b76;
   --pill: 50px;
-  --shadow: 0 1px 4px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.04);
+  --shadow: 0 2px 10px rgba(27,27,27,.06), 0 0 0 1px rgba(27,27,27,.04);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);color:var(--text);letter-spacing:-0.01em;min-height:100vh;}
@@ -755,9 +755,9 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .sig-preview-body{height:64px;display:flex;align-items:center;justify-content:center;background:#fafaff;}
 .sig-preview-body img{max-height:100%;max-width:100%;object-fit:contain;}
 /* 진한 단색은 너무 튀어서 연한 브랜드 톤으로 낮추고, 카메라 아이콘은 크게 키운다. */
-.qr-scan-btn{flex-shrink:0;width:110px;background:#ede9fe;color:var(--brand);border:1.5px solid #c4b5fd;border-radius:16px;font-size:14px;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;line-height:1.3;}
+.qr-scan-btn{flex-shrink:0;width:110px;background:var(--brand-xlight);color:var(--brand);border:1.5px solid #bcaef0;border-radius:16px;font-size:14px;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;line-height:1.3;}
 .qr-scan-btn .qr-scan-icon{font-size:38px;line-height:1;}
-.qr-scan-btn:hover{background:#e0d9ff;}
+.qr-scan-btn:hover{background:#ddd2f7;}
 
 .empty-text{font-size:13px;color:var(--muted);}
 
@@ -770,7 +770,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 /* 왼쪽=찍은 시각(한 줄), 오른쪽=교시. 교시 칸은 폭을 고정해 행끼리 세로로 줄을 맞춘다. */
 .ck-row{display:grid;grid-template-columns:1fr 10px 134px;align-items:stretch;gap:5px;}
 .ck-cell{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:7px;padding:9px 8px;min-width:0;border-radius:14px;border:1.5px solid var(--border);background:#fafafc;}
-.ck-cell.done{background:#ede9fe;border-color:#c4b5fd;}
+.ck-cell.done{background:var(--brand-xlight);border-color:#bcaef0;}
 .ck-cam{font-size:18px;line-height:1;flex-shrink:0;filter:grayscale(1);opacity:.4;}
 .ck-cell.done .ck-cam{filter:none;opacity:1;}
 .ck-time{font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap;}
@@ -778,7 +778,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .ck-dash{display:flex;align-items:center;justify-content:center;color:var(--border);font-size:12px;font-weight:800;}
 .ck-period{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:800;color:var(--muted);background:#fafafc;border:1.5px solid var(--border);border-radius:14px;padding:9px 6px;}
 /* 뒤 지점까지 찍어 이수된 교시만 색을 채운다 — 어디까지 인정됐는지 한눈에 보이도록. */
-.ck-period.done{background:#ede9fe;border-color:#c4b5fd;color:var(--brand);}
+.ck-period.done{background:var(--brand-xlight);border-color:#bcaef0;color:var(--brand);}
 /* 이수완료는 붉은 도장처럼 — 살짝 기울여 찍은 느낌을 준다. */
 .ck-stamp{color:#dc2626;border:2px solid #dc2626;border-radius:5px;padding:1px 4px;font-size:10px;font-weight:900;letter-spacing:.5px;line-height:1.25;white-space:nowrap;transform:rotate(-7deg);}
 
@@ -799,7 +799,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .sig-handle{width:36px;height:4px;background:#e5e7eb;border-radius:2px;margin:0 auto 14px;}
 .sig-title{font-size:17px;font-weight:800;color:#1a1a2e;text-align:center;}
 .sig-subtitle{font-size:12px;color:#94a3b8;text-align:center;margin-top:4px;margin-bottom:14px;}
-.sig-pad-wrap{position:relative;height:220px;border:1.5px solid #c4b5fd;border-radius:12px;overflow:hidden;background:#fafaff;}
+.sig-pad-wrap{position:relative;height:220px;border:1.5px solid #bcaef0;border-radius:12px;overflow:hidden;background:#fafaff;}
 #sig-canvas{width:100%;height:100%;touch-action:none;display:block;}
 .sig-btn-row{display:flex;gap:10px;margin-top:14px;}
 .sig-clear-btn{background:#f1f5f9;color:#374151;border:none;border-radius:12px;padding:14px 18px;font-size:14px;font-weight:700;cursor:pointer;}

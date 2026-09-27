@@ -1313,26 +1313,27 @@
 @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap');
 
 :root {
-  --brand: #6c63ff;
-  --brand-dark: #5651d5;
-  --brand-xlight: #ede9fe;
-  --canvas: #f4f5f7;
+  --brand: #5a5ac4;
+  --brand-dark: #45469e;
+  --brand-xlight: #ece5fb;
+  --canvas: #e0d7fb;
   --surface: #FFFFFF;
-  --border: #E5E7EB;
-  --text: #111827;
-  --muted: #6B7280;
+  --border: #ddd5ee;
+  --text: #1b1b1b;
+  --muted: #6b6b76;
   --radius: 10px;
   --pill: 50px;
-  --shadow: 0 1px 4px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.04);
+  --shadow: 0 2px 10px rgba(27,27,27,.06), 0 0 0 1px rgba(27,27,27,.04);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);color:var(--text);letter-spacing:-0.01em;min-height:100vh;}
 
 /* ── AUTH ── */
-.auth-wrap{min-height:100vh;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);display:flex;align-items:center;justify-content:center;padding:24px;}
+/* 참고 팔레트(연한 라벤더 → 거의 흰색)에 맞춘 배경 — 진한 보라 그라데이션은 걷어냈다. */
+.auth-wrap{min-height:100vh;background:linear-gradient(160deg,#e0d7fb 0%,#f7f1fe 100%);display:flex;align-items:center;justify-content:center;padding:24px;}
 .auth-card{background:var(--surface);border-radius:20px;padding:40px 36px;width:100%;max-width:400px;box-shadow:0 24px 64px rgba(0,0,0,0.3);}
 .auth-logo{text-align:center;margin-bottom:28px;}
-.auth-logo-mark{width:64px;height:64px;background:var(--brand);border-radius:18px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff;margin:0 auto 14px;}
+.auth-logo-mark{width:72px;height:72px;border-radius:20px;display:block;object-fit:cover;margin:0 auto 14px;box-shadow:0 3px 12px rgba(27,27,27,.14);}
 .auth-logo-title{font-size:22px;font-weight:800;color:var(--text);margin-top:8px;letter-spacing:-0.02em;}
 .auth-logo-sub{font-size:13px;color:var(--muted);margin-top:4px;}
 .auth-form-label{font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:6px;letter-spacing:0.06em;text-transform:uppercase;}
@@ -1409,7 +1410,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 /* 위쪽 여백은 띄워 올린 교시 라벨과 그 위 빨간 화살표가 들어갈 자리다. */
 /* 좌우 여백은 양끝 라벨이 틈 중앙에 걸쳐 바깥으로 삐져나오는 만큼을 받아준다. */
 .tl-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:0;overflow-x:auto;padding:112px 34px 4px;max-width:100%;}
-.tl-row.compact{padding:4px 2px;}
+.tl-row.compact{padding:64px 2px 4px;}
 .tl-row.compact .tl-dot{flex-shrink:0;}
 /* 지난/앞으로의 지점은 작게, 지금 찍는 지점만 크게 — 멀리서 시선이 현재로 모이게. */
 .tl-dot{position:relative;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;border:2px dashed var(--border);background:#fff;color:var(--muted);flex-shrink:0;transition:width .2s,height .2s;}
@@ -1422,12 +1423,15 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 /* 교시 라벨이 카메라 바로 위 띠를 쓰므로, 화살표는 그보다 더 위에 둔다.
    글자(▼)는 멀리서 가늘어 보여서, 테두리로 그린 두툼한 삼각형으로 바꿨다. */
 .tl-dot.now::after{content:'';position:absolute;bottom:calc(100% + 72px);left:50%;width:0;height:0;border-left:23px solid transparent;border-right:23px solid transparent;border-top:30px solid #ef4444;filter:drop-shadow(0 3px 4px rgba(0,0,0,.22));animation:tlArrowBounce 1s ease-in-out infinite;}
-.tl-row.compact .tl-dot.now::after{display:none;}
+.tl-row.compact .tl-dot.now::after{bottom:calc(100% + 44px);border-left-width:13px;border-right-width:13px;border-top-width:17px;}
 @keyframes tlArrowBounce{0%,100%{transform:translate(-50%,0);}50%{transform:translate(-50%,-10px);}}
 .tl-dot-badge{position:absolute;right:-5px;bottom:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--text);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #fff;}
 /* 카메라 사이의 '틈' — 연결선 역할을 하면서, 그 위에 교시 라벨을 띄워 붙인다.
    라벨이 가로 자리를 안 먹으니 카메라를 거의 붙여 놓을 수 있다. */
 .tl-gap{position:relative;width:20px;height:2px;background:#c7cbd6;flex-shrink:0;}
+/* 가로선에서 교시 라벨까지 올라가는 기둥 — 선이 카메라에서 끊기지 않고 교시로 이어진다. */
+.tl-gap::before{content:'';position:absolute;left:50%;transform:translateX(-50%);bottom:0;width:2px;height:48px;background:#c7cbd6;}
+.tl-gap.cur::before{height:50px;width:3px;background:var(--brand);}
 .tl-gap.cur{width:58px;}
 /* 교시 글자는 뒤에서도 "지금 어느 교시를 찍는지" 읽혀야 해서 크게. 카메라 위로
    확실히 띄워 올려서, 폭이 카메라를 넘어도(가운데부터 시작해도) 겹치지 않는다. */
@@ -1441,12 +1445,16 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 /* 패널 안쪽이 312px뿐이라 치수를 키우면 4교시부터 가로 스크롤이 생긴다.
    지점당 74px(32+4+34+4)로 맞춰 흔한 4교시까지는 스크롤 없이 들어가게 한다. */
 .tl-row.compact .tl-dot{width:39px;height:39px;font-size:18px;border-width:1.5px;}
-.tl-row.compact .tl-dot.active{box-shadow:0 0 0 3px rgba(108,99,255,0.18);animation:none;}
+.tl-row.compact .tl-dot.active{width:50px;height:50px;font-size:22px;box-shadow:0 0 0 3px rgba(90,90,196,0.18);}
 .tl-row.compact .tl-dot-badge{display:none;}
 /* 패널 축소판은 띄워 올리지 않는다(행 높이가 낮아 위 행과 겹친다). 폭도 좁아서
    '교시'는 떼고 숫자만 남긴다 — 1교시는 1, 2교시는 2. */
-.tl-row.compact .tl-gap{width:auto;height:auto;background:none;display:flex;align-items:center;padding:0 2px;}
-.tl-row.compact .tl-class{position:static;transform:none;width:23px;padding:6px 0;font-size:17px;border-radius:8px;}
+.tl-row.compact .tl-gap{width:14px;height:2px;}
+.tl-row.compact .tl-gap.cur{width:30px;}
+.tl-row.compact .tl-class{bottom:32px;width:auto;padding:4px 7px;font-size:15px;border-radius:8px;}
+.tl-row.compact .tl-class.cur{bottom:34px;padding:5px 9px;font-size:19px;border-radius:9px;}
+.tl-row.compact .tl-gap::before{height:32px;}
+.tl-row.compact .tl-gap.cur::before{height:34px;}
 .tl-row.compact .tl-class.cur{background:var(--brand);border-color:var(--brand);color:#fff;}
 .tl-row.compact .tl-class-suffix{display:none;}
 
@@ -1485,7 +1493,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
   .qr-side-left{width:330px;}
   /* 패널이 좁아진 만큼 축소 타임라인도 줄여야 6교시가 스크롤 없이 들어간다. */
   .tl-row.compact .tl-dot{width:33px;height:33px;font-size:15px;}
-  .tl-row.compact .tl-class{width:19px;padding:5px 0;font-size:14px;}
+  .tl-row.compact .tl-class{padding:3px 6px;font-size:13px;}
 }
 
 /* 문서생성 대상 선택 모달(qr-admin에서 가져온 마크업이 쓰는 클래스) */
@@ -1517,7 +1525,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 <div id="auth-wrap" class="auth-wrap">
   <div class="auth-card">
     <div class="auth-logo">
-      <div class="auth-logo-mark">연</div>
+      <img class="auth-logo-mark" src="here-icon.png" alt="Here">
       <div class="auth-logo-title">연수교육 QR 인증</div>
       <div class="auth-logo-sub">관리자 로그인</div>
     </div>
