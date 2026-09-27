@@ -321,7 +321,8 @@
     }
     // 새 교시를 여는 건 되돌리기 번거롭다 — 이번 지점을 아직 안 찍은 사람이 있으면
     // 찍을 기회를 놓친 채 넘어가지 않도록 한 번 확인받는다.
-    const absent = rosterAll.filter(p => !checkedIdsThisPeriod.has(String(p.kakaoId)));
+    // 조퇴자는 빼고 센다 — 이미 나간 사람 때문에 경고가 뜨면 확인창이 의미를 잃는다.
+    const absent = rosterAll.filter(p => !p.earlyLeaveAt && !checkedIdsThisPeriod.has(String(p.kakaoId)));
     if (absent.length > 0) {
       const shown = absent.slice(0, 5).map(p => maskName(p.name)).join(', ');
       const more = absent.length > 5 ? ` 외 ${absent.length - 5}명` : '';
@@ -915,9 +916,13 @@
       return;
     }
 
-    const done = rosterAll.filter(p => checkedIdsThisPeriod.has(String(p.kakaoId)));
-    const absent = rosterAll.filter(p => !checkedIdsThisPeriod.has(String(p.kakaoId)));
-    const total = rosterAll.length;
+    // 조퇴자는 미체크에서 뺀다 — 이미 나간 사람인데 '아직 안 찍은 사람'에 섞이면
+    // 관리자가 기다리거나 찾아다니게 된다.
+    const left = rosterAll.filter(p => p.earlyLeaveAt);
+    const staying = rosterAll.filter(p => !p.earlyLeaveAt);
+    const done = staying.filter(p => checkedIdsThisPeriod.has(String(p.kakaoId)));
+    const absent = staying.filter(p => !checkedIdsThisPeriod.has(String(p.kakaoId)));
+    const total = staying.length;
 
     // 붉은색(미체크) + 파란색(체크)을 한 줄에 쌓아 비율로 보여준다.
     fillAbsent.style.width = total ? (absent.length / total) * 100 + '%' : '0%';
@@ -931,6 +936,24 @@
     doneList.innerHTML = done.length
       ? done.map(rosterItemHtml).join('')
       : '<div class="roster-empty">-</div>';
+
+    renderEarlyLeaveList(left);
+  }
+
+  // 조퇴 명단 — 누가 몇 교시까지 하고 갔는지만 간단히.
+  function renderEarlyLeaveList(left) {
+    const sec = document.getElementById('early-leave-section');
+    const list = document.getElementById('early-leave-list');
+    const label = document.getElementById('early-leave-label');
+    if (!sec) return;
+    sec.hidden = left.length === 0;   // 조퇴자가 없으면 칸 자체를 감춘다
+    if (!left.length) return;
+    label.textContent = `조퇴 ${left.length}명`;
+    list.innerHTML = left.map(p => {
+      const upto = p.earlyLeavePeriod > 0 ? `${p.earlyLeavePeriod}교시까지` : '인정 교시 없음';
+      return `<div class="roster-item el-item"><span>${escapeHtml(maskName(p.name))}</span>`
+        + `<span class="el-upto">${upto}</span></div>`;
+    }).join('');
   }
 
   // ── 교육종료 확인창 ──
@@ -1498,6 +1521,12 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
   .tl-row.compact .tl-class{padding:3px 6px;font-size:13px;}
 }
 
+/* 조퇴 명단 — 미체크(붉은색)와 헷갈리지 않게 중립 회색 톤으로 둔다. */
+.el-label{color:#6b6b76;margin-top:4px;}
+.el-list{display:flex;flex-direction:column;gap:5px;padding:6px;border-radius:10px;background:var(--subtle);border:1px solid var(--border);max-height:150px;overflow-y:auto;}
+.el-item{background:#fff;border:1px solid var(--border);}
+.el-upto{color:#6b6b76;font-weight:700;font-size:18px;}
+
 /* 문서생성 대상 선택 모달(qr-admin에서 가져온 마크업이 쓰는 클래스) */
 .modal-overlay{position:fixed;inset:0;background:rgba(17,24,39,0.5);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;}
 .modal-card{background:var(--surface);border-radius:18px;padding:26px;box-shadow:var(--shadow);width:100%;max-height:85vh;overflow-y:auto;}
@@ -1637,6 +1666,13 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
         </div>
         <!-- 지점별 인원수는 QR 위 타임라인의 📷 배지가 이미 같은 값을 보여주므로
              따로 그래프를 두지 않는다(같은 숫자를 두 번 그리던 것을 걷어냈다). -->
+
+        <!-- 조퇴 — 미체크와 섞이면 안 찍은 사람으로 오해하므로 따로 맨 아래에 둔다.
+             조퇴자가 없으면 통째로 숨긴다. -->
+        <div id="early-leave-section" hidden>
+          <div class="panel-label el-label" id="early-leave-label">조퇴</div>
+          <div class="el-list" id="early-leave-list"></div>
+        </div>
       </div>
     </div>
   </div>
