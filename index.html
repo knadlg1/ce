@@ -69,6 +69,16 @@
     if (savedSid && savedDate === todayKST()) currentSessionId = savedSid;
   }
 
+  // 기기에 저장된 세션 id가 없을 때의 복구 경로 — 로그아웃으로 지워졌거나 다른
+  // 기기/브라우저로 들어온 경우다. 체크인 때 Cloud Function이 학생 문서에 남겨둔
+  // lastSessionId를 쓴다(오늘 것일 때만). 로그인 직후 이미 읽는 문서라 추가 조회가 없다.
+  function recoverSessionIdFromStudentDoc(studentData) {
+    if (!studentData) return;
+    if (studentData.lastSessionDate !== todayKST()) return;
+    if (!studentData.lastSessionId) return;
+    setCurrentSessionId(studentData.lastSessionId);
+  }
+
   // ── 화면 전환 ──
   function showLoginScreen(msg) {
     document.getElementById('registration-screen').hidden = true;
@@ -226,6 +236,7 @@
       if (!snap.exists()) { showRegistration(); return; }
       studentName = snap.data().name || '';
       restoreSessionIdIfToday();
+      if (!currentSessionId) recoverSessionIdFromStudentDoc(snap.data());
       enterMain();
       await consumePendingScanIfAny();
     } catch (e) {
