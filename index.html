@@ -704,6 +704,7 @@
   --brand-dark: #45469e;
   --brand-xlight: #ece5fb;
   --canvas: #e0d7fb;
+  --subtle: #f4f3f8;   /* 칩·목록의 중립 채움(페이지 배경과 구분) */
   --surface: #FFFFFF;
   --border: #ddd5ee;
   --text: #1b1b1b;
@@ -736,7 +737,8 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .kakao-btn{width:100%;padding:15px;border-radius:var(--pill);border:none;font-size:15px;font-weight:700;cursor:pointer;background:#FEE500;color:#191600;}
 
 /* ── 메인 화면 ── */
-#main-screen{display:flex;flex-direction:column;min-height:100vh;padding-bottom:24px;}
+/* 로그인 이후 메인 화면은 흰 바탕 — 라벤더는 로그인/가입 화면에만 둔다. */
+#main-screen{display:flex;flex-direction:column;min-height:100vh;padding-bottom:24px;background:#fff;}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);}
 .topbar-title{font-size:17px;font-weight:800;color:var(--brand);}
 .btn-logout{background:transparent;border:1.5px solid var(--border);color:var(--muted);padding:7px 14px;border-radius:var(--pill);cursor:pointer;font-size:12px;font-weight:600;}
@@ -782,7 +784,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 /* 이수완료는 붉은 도장처럼 — 살짝 기울여 찍은 느낌을 준다. */
 .ck-stamp{color:#dc2626;border:2px solid #dc2626;border-radius:5px;padding:1px 4px;font-size:10px;font-weight:900;letter-spacing:.5px;line-height:1.25;white-space:nowrap;transform:rotate(-7deg);}
 
-.schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--canvas);}
+.schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--subtle);}
 .schedule-row:last-child{border-bottom:none;}
 .schedule-time{flex-shrink:0;width:82px;font-size:12px;font-weight:700;color:var(--brand);}
 .schedule-title{font-size:13px;font-weight:700;color:var(--text);}
