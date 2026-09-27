@@ -814,14 +814,16 @@
 
   function timelineHtml() {
     let html = '';
-    timelinePoints().forEach((pt, i) => {
-      if (i > 0) html += '<div class="tl-line"></div>';
+    timelinePoints().forEach((pt) => {
       const badge = pt.count > 0 ? `<div class="tl-dot-badge">${pt.count}</div>` : '';
       html += `<div class="tl-dot ${pt.cls}">${pt.icon}${badge}</div>`;
       // 마지막(종료) 지점 뒤에는 수업이 없으므로 교시 박스를 그리지 않는다.
+      // 교시 라벨은 카메라 사이 '틈'에 띄워 올려 붙인다. 가로 자리를 차지하지 않아
+      // 카메라를 거의 붙여 놓을 수 있고, 그만큼 라벨을 크게 키울 수 있다.
+      // '교시' 글자는 좁은 패널(compact)에서 CSS로 숨겨 숫자만 남긴다.
       if (!pt.isFinalPoint) {
-        html += '<div class="tl-line"></div>';
-        html += `<div class="tl-class${pt.classDone ? ' done' : ''}">${pt.p}교시</div>`;
+        html += `<div class="tl-gap"><span class="tl-class${pt.classDone ? ' done' : ''}${pt.p === currentPeriod ? ' cur' : ''}">`
+          + `${pt.p}<span class="tl-class-suffix">교시</span></span></div>`;
       }
     });
     return html;
@@ -1402,9 +1404,11 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
    교시 박스를 번갈아 가로로 배치해 그 의미가 한눈에 보이게 한다.
    period N = (N-1)교시와 N교시 사이의 스캔 지점(period 1 = 교육시작 전).
    같은 마크업을 오른쪽 패널에서도 compact 크기로 재사용한다. */
-/* 위쪽 여백은 현재 지점을 가리키는 빨간 화살표(.tl-dot.now::after)가 들어갈 자리다. */
-.tl-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:0;overflow-x:auto;padding:48px 2px 4px;max-width:100%;}
+/* 위쪽 여백은 띄워 올린 교시 라벨과 그 위 빨간 화살표가 들어갈 자리다. */
+/* 좌우 여백은 양끝 라벨이 틈 중앙에 걸쳐 바깥으로 삐져나오는 만큼을 받아준다. */
+.tl-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:0;overflow-x:auto;padding:86px 28px 4px;max-width:100%;}
 .tl-row.compact{padding:4px 2px;}
+.tl-row.compact .tl-dot{flex-shrink:0;}
 .tl-dot{position:relative;width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:23px;border:2px dashed var(--border);background:#fff;color:var(--muted);flex-shrink:0;}
 /* 찍은 지점과 끝난 교시는 같은 뜻('완료')이라 같은 색으로 통일한다(교시 박스 색 기준). */
 .tl-dot.done{border-style:solid;border-color:var(--brand);background:var(--brand-xlight);color:var(--brand);}
@@ -1412,27 +1416,34 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 @keyframes tlPulse{0%,100%{box-shadow:0 0 0 5px rgba(108,99,255,0.18);}50%{box-shadow:0 0 0 11px rgba(108,99,255,0.08);}}
 /* 지금 찍는 지점을 가리키는 빨간 화살표. 오른쪽 패널의 축소 타임라인에서는
    위아래 행과 겹쳐서 오히려 읽기 어려워지므로 큰 타임라인에서만 띄운다. */
-.tl-dot.now::after{content:'▼';position:absolute;bottom:calc(100% + 10px);left:50%;color:#ef4444;font-size:26px;font-weight:900;line-height:1;text-shadow:0 1px 2px rgba(0,0,0,.15);animation:tlArrowBounce 1s ease-in-out infinite;}
+/* 교시 라벨이 카메라 바로 위 띠를 쓰므로, 화살표는 그보다 더 위에 둔다. */
+.tl-dot.now::after{content:'▼';position:absolute;bottom:calc(100% + 58px);left:50%;color:#ef4444;font-size:26px;font-weight:900;line-height:1;text-shadow:0 1px 2px rgba(0,0,0,.15);animation:tlArrowBounce 1s ease-in-out infinite;}
 .tl-row.compact .tl-dot.now::after{display:none;}
 @keyframes tlArrowBounce{0%,100%{transform:translate(-50%,0);}50%{transform:translate(-50%,-10px);}}
 .tl-dot-badge{position:absolute;right:-5px;bottom:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--text);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #fff;}
-/* 간격은 좁히되, 너무 짧으면 낱개 칩처럼 보여 이어진 흐름이 안 읽힌다 — 9px에 진한 색. */
-.tl-line{height:2px;width:9px;background:#c7cbd6;flex-shrink:0;}
-/* 교시 글자는 뒤에서도 "지금 어느 교시를 찍는지" 읽혀야 해서 크게 키웠다.
-   대신 줄에서 살짝 띄워 올려(bottom) 카메라 사이를 덜 벌리면서도 눈에 띄게 한다. */
-.tl-class{position:relative;bottom:13px;width:62px;padding:5px 0;border-radius:10px;font-size:18px;font-weight:800;text-align:center;background:var(--canvas);color:var(--muted);border:1.5px solid var(--border);white-space:nowrap;flex-shrink:0;}
+/* 카메라 사이의 '틈' — 연결선 역할을 하면서, 그 위에 교시 라벨을 띄워 붙인다.
+   라벨이 가로 자리를 안 먹으니 카메라를 거의 붙여 놓을 수 있다. */
+.tl-gap{position:relative;width:20px;height:2px;background:#c7cbd6;flex-shrink:0;}
+/* 교시 글자는 뒤에서도 "지금 어느 교시를 찍는지" 읽혀야 해서 크게. 카메라 위로
+   확실히 띄워 올려서, 폭이 카메라를 넘어도(가운데부터 시작해도) 겹치지 않는다. */
+.tl-class{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);padding:5px 6px;border-radius:10px;font-size:22px;font-weight:800;line-height:1.15;text-align:center;background:var(--canvas);color:var(--muted);border:1.5px solid var(--border);white-space:nowrap;}
+/* 지금 찍는 지점의 교시는 채워서 강조 — 멀리서도 어느 교시인지 바로 읽히게. */
+.tl-class.cur{background:var(--brand);border-color:var(--brand);color:#fff;}
 /* 끝난 교시는 색을 채워 "여기까지 진행/인정됐다"가 한눈에 보이게 한다(학생 화면과 동일). */
 .tl-class.done{background:var(--brand-xlight);color:var(--brand);border-color:var(--brand);}
 
 /* 오른쪽 패널용 축소 버전 — 큰 타임라인과 같은 마크업을 크기만 줄여 재사용한다. */
 /* 패널 안쪽이 312px뿐이라 치수를 키우면 4교시부터 가로 스크롤이 생긴다.
    지점당 74px(32+4+34+4)로 맞춰 흔한 4교시까지는 스크롤 없이 들어가게 한다. */
-.tl-row.compact .tl-dot{width:32px;height:32px;font-size:14px;border-width:1.5px;}
+.tl-row.compact .tl-dot{width:29px;height:29px;font-size:13px;border-width:1.5px;}
 .tl-row.compact .tl-dot.active{box-shadow:0 0 0 3px rgba(108,99,255,0.18);animation:none;}
 .tl-row.compact .tl-dot-badge{display:none;}
-/* 패널 축소판은 띄워 올리지 않는다 — 행 높이가 낮아 위 행과 겹친다. */
-.tl-row.compact .tl-class{position:static;bottom:auto;width:34px;padding:5px 0;font-size:10px;border-radius:7px;}
-.tl-row.compact .tl-line{width:4px;}
+/* 패널 축소판은 띄워 올리지 않는다(행 높이가 낮아 위 행과 겹친다). 폭도 좁아서
+   '교시'는 떼고 숫자만 남긴다 — 1교시는 1, 2교시는 2. */
+.tl-row.compact .tl-gap{width:auto;height:auto;background:none;display:flex;align-items:center;padding:0 2px;}
+.tl-row.compact .tl-class{position:static;transform:none;width:17px;padding:4px 0;font-size:11px;border-radius:6px;}
+.tl-row.compact .tl-class.cur{background:var(--brand);border-color:var(--brand);color:#fff;}
+.tl-row.compact .tl-class-suffix{display:none;}
 
 /* ── ROSTER PANEL ── */
 .roster-panel{background:var(--surface);border-radius:20px;padding:24px;box-shadow:var(--shadow);width:360px;flex-shrink:0;display:flex;flex-direction:column;gap:14px;}
