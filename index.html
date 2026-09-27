@@ -422,10 +422,10 @@
     }
   }
 
-  // 교시 하나를 한 줄로 — [찍은시각] - N교시 - [찍은시각].
-  // 세로로 쌓으면 교시가 늘수록 화면이 끝없이 길어져서, 교시당 한 행인 표로 바꿨다.
-  // 스캔 지점 p는 (p-1)교시 뒤이자 p교시 앞이라 두 역할을 겸한다 — 그래서 N교시 행의
-  // 오른쪽 시각과 (N+1)교시 행의 왼쪽 시각은 같은 체크인 하나를 가리킨다.
+  // 교시 하나를 한 줄로 — [📷 찍은시각] - N교시.
+  // 스캔 지점 p는 p교시 바로 앞이라 그 교시 행의 시각으로 쓴다. 앞뒤 시각을 양쪽에
+  // 다 적던 이전 방식은 같은 시각이 두 행에 중복돼 8·9교시까지 가면 읽기 힘들었다.
+  // p교시의 이수 여부는 그 뒤 지점(p+1)을 찍었는지로 판단해 '이수완료' 도장으로 보여준다.
   function fmtCheckedAtShort(ts) {
     try {
       const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts);
@@ -443,25 +443,19 @@
     // 아직 하나도 안 찍었어도 1교시 행은 보여줘야 "무엇을 찍어야 하는지"가 전달된다.
     const rowCount = Math.max(1, maxChecked);
 
-    const cell = (p) => {
-      const c = checkins.find(x => x.period === p);
-      if (!c) return '<div class="ck-cell"><span class="ck-cam">📷</span><span class="ck-time">미체크</span></div>';
-      const extra = c.makeupApproved ? '<br>(서명출석)' : '';
-      return `<div class="ck-cell done"><span class="ck-cam">📷</span><span class="ck-time">${fmtCheckedAtShort(c.checkedAt)}${extra}</span></div>`;
-    };
-
     let html = '';
     for (let p = 1; p <= rowCount; p++) {
-      // p교시는 앞(p)과 뒤(p+1) 두 지점을 모두 찍어야 인정된다.
-      const doneBoth = checkins.some(x => x.period === p) && checkins.some(x => x.period === p + 1);
-      // 색만으로는 인정 여부가 잘 안 읽혀서, 양쪽을 다 찍은 교시에는 빨간 체크를 단다.
-      // 글자를 가리지 않도록 박스 안 위쪽 줄에 따로 놓는다(겹치지 않게 세로로 쌓기).
-      const mark = doneBoth ? '<span class="ck-check">✓</span>' : '';
-      html += `<div class="ck-row">${cell(p)}`
+      const c = checkins.find(x => x.period === p);       // p교시 바로 앞에서 찍은 것
+      const done = !!c && checkins.some(x => x.period === p + 1); // 뒤까지 찍어야 이수
+      const time = c
+        ? `${fmtCheckedAtShort(c.checkedAt)}${c.makeupApproved ? ' (서명출석)' : ''}`
+        : '미체크';
+      html += '<div class="ck-row">'
+        + `<div class="ck-cell${c ? ' done' : ''}"><span class="ck-cam">📷</span><span class="ck-time">${time}</span></div>`
         + '<div class="ck-dash">-</div>'
-        + `<div class="ck-period${doneBoth ? ' done' : ''}">${mark}<span>${p}교시</span></div>`
-        + '<div class="ck-dash">-</div>'
-        + `${cell(p + 1)}</div>`;
+        + `<div class="ck-period${done ? ' done' : ''}"><span>${p}교시</span>`
+        + (done ? '<span class="ck-stamp">이수완료</span>' : '')
+        + '</div></div>';
     }
     el.innerHTML = html;
   }
@@ -773,18 +767,20 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
    양옆 칸은 각각 그 교시의 앞/뒤 스캔 지점이고, 가운데가 교시다.
    찍힌 칸은 QR 스캔 버튼(.qr-scan-btn)과 같은 연보라 배경/테두리로 칠해
    "이건 내가 찍은 것"이 같은 색 언어로 읽히게 한다. */
-.ck-row{display:grid;grid-template-columns:1fr 10px 52px 10px 1fr;align-items:stretch;gap:5px;}
-.ck-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:10px 6px;min-width:0;border-radius:14px;border:1.5px solid var(--border);background:#fafafc;}
+/* 왼쪽=찍은 시각(한 줄), 오른쪽=교시. 교시 칸은 폭을 고정해 행끼리 세로로 줄을 맞춘다. */
+.ck-row{display:grid;grid-template-columns:1fr 10px 134px;align-items:stretch;gap:5px;}
+.ck-cell{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:7px;padding:9px 8px;min-width:0;border-radius:14px;border:1.5px solid var(--border);background:#fafafc;}
 .ck-cell.done{background:#ede9fe;border-color:#c4b5fd;}
-.ck-cam{font-size:20px;line-height:1;filter:grayscale(1);opacity:.4;}
+.ck-cam{font-size:18px;line-height:1;flex-shrink:0;filter:grayscale(1);opacity:.4;}
 .ck-cell.done .ck-cam{filter:none;opacity:1;}
-.ck-time{font-size:12px;font-weight:700;color:var(--muted);text-align:center;line-height:1.3;word-break:keep-all;}
+.ck-time{font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap;}
 .ck-cell.done .ck-time{color:var(--brand);}
 .ck-dash{display:flex;align-items:center;justify-content:center;color:var(--border);font-size:12px;font-weight:800;}
-.ck-period{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:12px;font-weight:800;color:var(--muted);background:#fafafc;border:1.5px solid var(--border);border-radius:14px;}
-/* 앞뒤를 다 찍어 인정된 교시만 색을 채운다 — 어디까지 인정됐는지 한눈에 보이도록. */
+.ck-period{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:800;color:var(--muted);background:#fafafc;border:1.5px solid var(--border);border-radius:14px;padding:9px 6px;}
+/* 뒤 지점까지 찍어 이수된 교시만 색을 채운다 — 어디까지 인정됐는지 한눈에 보이도록. */
 .ck-period.done{background:#ede9fe;border-color:#c4b5fd;color:var(--brand);}
-.ck-check{color:#ef4444;font-size:16px;font-weight:900;line-height:1;}
+/* 이수완료는 붉은 도장처럼 — 살짝 기울여 찍은 느낌을 준다. */
+.ck-stamp{color:#dc2626;border:2px solid #dc2626;border-radius:5px;padding:1px 4px;font-size:10px;font-weight:900;letter-spacing:.5px;line-height:1.25;white-space:nowrap;transform:rotate(-7deg);}
 
 .schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--canvas);}
 .schedule-row:last-child{border-bottom:none;}
