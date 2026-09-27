@@ -105,11 +105,11 @@
   window.doLogout = function () {
     localStorage.removeItem('ce_kakao_id');
     localStorage.removeItem('ce_kakao_nickname');
-    localStorage.removeItem('ce_session_id');
-    localStorage.removeItem('ce_session_date');
+    // ce_session_id/ce_session_date는 남긴다 — 지우면 재로그인 때 어느 세션을
+    // 봐야 할지 몰라 이미 찍은 출석이 안 보인다. 세션 id는 '기관_날짜'라
+    // 사용자별 값이 아니고, 체크인 조회는 kakaoId로 거르므로 남겨도 안전하다.
     kakaoId = null;
     studentName = '';
-    currentSessionId = null;
     showLoginScreen();
   };
 
@@ -717,11 +717,11 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 [hidden]{display:none!important;}
 
 .screen{min-height:100vh;}
-#login-screen,#registration-screen{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);display:flex;align-items:center;justify-content:center;padding:24px;}
+#login-screen,#registration-screen{background:linear-gradient(160deg,#e0d7fb 0%,#f7f1fe 100%);display:flex;align-items:center;justify-content:center;padding:24px;}
 
 .auth-card{background:var(--surface);border-radius:20px;padding:40px 32px;width:100%;max-width:380px;box-shadow:0 24px 64px rgba(0,0,0,0.3);}
 .auth-logo{text-align:center;margin-bottom:28px;}
-.auth-logo-mark{width:64px;height:64px;background:var(--brand);border-radius:18px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff;margin:0 auto 14px;}
+.auth-logo-mark{width:72px;height:72px;border-radius:20px;display:block;object-fit:cover;margin:0 auto 14px;box-shadow:0 3px 12px rgba(27,27,27,.14);}
 .auth-logo-title{font-size:22px;font-weight:800;color:var(--text);margin-top:8px;letter-spacing:-0.02em;}
 .auth-logo-sub{font-size:13px;color:var(--muted);margin-top:4px;}
 .auth-form-label{font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:6px;letter-spacing:0.06em;text-transform:uppercase;}
@@ -831,7 +831,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 <div id="login-screen" class="screen">
   <div class="auth-card">
     <div class="auth-logo">
-      <div class="auth-logo-mark">연</div>
+      <img class="auth-logo-mark" src="here-icon.png" alt="Here">
       <div class="auth-logo-title">연수교육 QR 인증</div>
       <div class="auth-logo-sub">학생 로그인</div>
     </div>
@@ -843,7 +843,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 <div id="registration-screen" class="screen" hidden>
   <div class="auth-card">
     <div class="auth-logo">
-      <div class="auth-logo-mark">연</div>
+      <img class="auth-logo-mark" src="here-icon.png" alt="Here">
       <div class="auth-logo-title">회원가입</div>
       <div class="auth-logo-sub">이름과 휴대폰 인증만 하면 돼요</div>
     </div>
