@@ -1476,25 +1476,49 @@
     renderCraftMatchDetail();
   }
 
+  // 참석자가 수천 명이 되면 전원을 줄줄이 나열해봐야 읽히지 않는다.
+  // 숫자 요약을 앞세우고, 손댈 것이 있는 건(확인 필요·못 찾음)만 이름을 보여준다.
+  const CRAFT_EXCEPTION_LIMIT = 30;
+
   function renderCraftMatchDetail() {
     const el = document.getElementById('craft-match-detail');
     if (!craftMatches) { el.innerHTML = ''; return; }
     const { matched, ambiguous, missing } = craftMatches;
-    const row = (name, right, cls) => `<tr><td>${escapeHtml(name)}</td><td class="${cls}">${right}</td></tr>`;
+    const total = matched.length + ambiguous.length + missing.length;
+    const n = (v) => v.toLocaleString('ko-KR');
+
+    const stat = (label, value, cls) =>
+      `<div class="mt-stat"><div class="mt-stat-n ${cls}">${n(value)}</div><div class="mt-stat-l">${label}</div></div>`;
+
+    const exceptions = [
+      ...ambiguous.map(a => ({ name: a.student.name, cls: 'mt-warn', tag: '확인 필요', why: a.why })),
+      ...missing.map(m => ({ name: m.student.name, cls: 'mt-no', tag: '못 찾음', why: '파일에 없음' })),
+    ];
+    const shown = exceptions.slice(0, CRAFT_EXCEPTION_LIMIT);
+
     el.innerHTML = `
-      <div style="font-size:14px;font-weight:800;margin-bottom:8px;">매칭 결과</div>
-      <table class="mt-tbl">
-        <thead><tr><th style="width:120px;">참석자</th><th>결과</th></tr></thead>
-        <tbody>
-          ${matched.map(m => row(m.student.name,
-            `<span class="mt-ok">붙임</span> · 면허 ${escapeHtml(m.row.license || '-')} · ${escapeHtml(m.row.workplace || '-')}`
-            + `<span style="color:var(--muted);font-size:11px;"> (${m.how})</span>`, '')).join('')}
-          ${ambiguous.map(a => row(a.student.name,
-            `<span class="mt-warn">확인 필요</span> · ${escapeHtml(a.why)} — 자동으로 붙이지 않았습니다`, '')).join('')}
-          ${missing.map(m => row(m.student.name,
-            `<span class="mt-no">파일에 없음</span> · 면허번호 빈 칸으로 나갑니다`, '')).join('')}
-        </tbody>
-      </table>`;
+      <div style="font-size:14px;font-weight:800;margin-bottom:10px;">매칭 결과</div>
+      <div class="mt-summary">
+        ${stat('참석자', total, '')}
+        ${stat('매칭됨', matched.length, 'mt-ok')}
+        ${stat('확인 필요', ambiguous.length, 'mt-warn')}
+        ${stat('못 찾음', missing.length, 'mt-no')}
+      </div>
+      ${exceptions.length ? `
+        <div class="mt-exc-head">손봐야 할 ${n(exceptions.length)}건</div>
+        <div class="mt-exc-scroll">
+          <table class="mt-tbl">
+            <thead><tr><th style="width:140px;">참석자</th><th>사유</th></tr></thead>
+            <tbody>${shown.map(x =>
+              `<tr><td>${escapeHtml(x.name)}</td>
+                   <td><span class="${x.cls}">${x.tag}</span> · ${escapeHtml(x.why)}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        ${exceptions.length > shown.length
+          ? `<div class="mt-more">외 ${n(exceptions.length - shown.length)}건 — 이 사람들은 면허번호가 빈 칸으로 나갑니다.</div>`
+          : ''}`
+        : '<div class="mt-allok">모두 매칭되었습니다.</div>'}`;
   }
 
   // 매칭된 값을 저장한 뒤 기존 문서생성 모달을 연다(엑셀 생성 로직은 그대로 재사용).
@@ -1758,7 +1782,24 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .craft-date-n{font-size:12px;font-weight:700;opacity:.75;}
 .craft-picked{margin-top:10px;font-size:12px;color:var(--text);line-height:1.5;}
 .craft-slot-result{justify-content:space-between;}
-/* 매칭 결과 — 못 붙은 사람을 관리자가 바로 알아볼 수 있어야 한다. */
+/* 준비 중인 기능 — 왜 못 쓰는지 보이게 두되 눌리지는 않게 한다. */
+.is-locked{opacity:.55;}
+.is-locked .auth-input:disabled,.is-locked .btn-primary:disabled{cursor:not-allowed;}
+.lock-chip{font-size:11px;font-weight:800;padding:3px 9px;border-radius:20px;background:#e7e5ee;color:#6b6b76;}
+
+/* 매칭 결과 — 수천 명이어도 읽히도록 숫자 요약이 먼저, 예외만 이름으로. */
+.mt-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;}
+.mt-stat{background:var(--subtle);border:1px solid var(--border);border-radius:12px;padding:12px 14px;text-align:center;}
+.mt-stat-n{font-size:26px;font-weight:800;line-height:1.15;font-variant-numeric:tabular-nums;}
+.mt-stat-l{font-size:12px;font-weight:700;color:var(--muted);margin-top:2px;}
+.mt-exc-head{font-size:13px;font-weight:800;color:var(--text);margin-bottom:7px;}
+/* 예외가 수십 건이어도 문서생성 버튼이 화면 밖으로 밀리지 않게 자체 스크롤을 준다. */
+.mt-exc-scroll{max-height:250px;overflow:auto;border:1px solid var(--border);border-radius:10px;}
+.mt-exc-scroll .mt-tbl th{position:sticky;top:0;}
+.mt-exc-scroll .mt-tbl th,.mt-exc-scroll .mt-tbl td{border-left:0;border-right:0;}
+.mt-more{font-size:12px;color:var(--muted);margin-top:8px;}
+.mt-allok{font-size:13px;font-weight:700;color:var(--brand);background:var(--brand-xlight);
+          border-radius:10px;padding:11px 14px;text-align:center;}
 .mt-tbl{width:100%;border-collapse:collapse;font-size:13px;}
 .mt-tbl th{background:var(--subtle);padding:8px 10px;text-align:left;font-weight:800;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);}
 .mt-tbl td{padding:8px 10px;border-bottom:1px solid var(--border);}
@@ -1923,26 +1964,22 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
   </div>
 
   <div class="page" id="page-admin" style="display:none;">
-    <!-- 오늘 일정 다시 불러오기 — KMA는 클라우드 서버 IP를 차단해서 관리자 브라우저에서만
-         재수집이 가능하다(refreshTodaySchedule은 항상 백그라운드로 유지, 이 버튼은 수동 재시도용). -->
-    <div class="hist-detail-card" style="max-width:900px;margin:24px auto 0;">
-      <div style="display:flex;align-items:center;justify-content:space-between;">
-        <div style="font-size:18px;font-weight:800;color:var(--brand);">일정 관리</div>
-        <button class="btn-primary" id="btn-refresh-schedule" style="padding:8px 18px;font-size:13px;" onclick="refreshScheduleNow()">오늘 일정 다시 불러오기</button>
+    <!-- 출석 서명요청 — 운영 방향이 정해질 때까지 잠가 둔다. 화면은 남겨서
+         무엇이 준비 중인지 보이게 하되, 실제 요청은 나가지 않는다. -->
+    <div class="hist-detail-card is-locked" style="max-width:900px;margin:24px auto 0;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <span style="font-size:18px;font-weight:800;color:var(--brand);">출석 서명요청</span>
+        <span class="lock-chip">준비 중</span>
       </div>
-    </div>
-
-    <div class="hist-detail-card" style="max-width:900px;margin:24px auto 0;">
-      <div style="font-size:18px;font-weight:800;color:var(--brand);margin-bottom:14px;">출석 서명요청</div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
-        <select class="auth-input" id="makeup-student-select" style="margin:0;width:auto;flex:1;min-width:200px;">
+        <select class="auth-input" id="makeup-student-select" disabled style="margin:0;width:auto;flex:1;min-width:200px;">
           <option value="">학생 선택</option>
         </select>
-        <input type="number" min="1" id="makeup-period-input" class="auth-input" placeholder="교시" style="margin:0;width:90px;">
-        <button class="btn-primary" onclick="sendMakeupRequest()">요청 보내기</button>
+        <input type="number" min="1" id="makeup-period-input" class="auth-input" placeholder="교시" disabled style="margin:0;width:90px;">
+        <button class="btn-primary" disabled>요청 보내기</button>
       </div>
       <div id="makeup-requests-list">
-        <div class="hist-empty">요청 내역이 없습니다.</div>
+        <div class="hist-empty">기능 준비 중입니다.</div>
       </div>
     </div>
 
