@@ -107,6 +107,8 @@
     document.getElementById('page-admin').style.display = tab === 'admin' ? '' : 'none';
     document.getElementById('tab-btn-qr').classList.toggle('active', tab === 'qr');
     document.getElementById('tab-btn-admin').classList.toggle('active', tab === 'admin');
+    // 수업 기록 목록은 관리자 탭을 열 때 한 번 채운다(로그인 직후엔 필요 없다).
+    if (tab === 'admin') initCraftPage();
   };
 
   async function enterDashboard() {
@@ -120,8 +122,6 @@
     orgLabel.style.fontSize =
       (nameLen <= 7 ? 56 : nameLen <= 10 ? 46 : nameLen <= 14 ? 38 : 31) + 'px';
     document.getElementById('session-date').value = todayKST();
-    const docgenDate = document.getElementById('docgen-date');
-    if (docgenDate && !docgenDate.value) docgenDate.value = todayKST();
     startRosterListener();
     startPeriodCountsListener();
     startRosterPoll();
@@ -1019,53 +1019,6 @@
   // 그 화면이 없으므로 아래 loadDocGenData(date)가 날짜 하나로 직접 채운다.
   // ══════════════════════════════════════════════════════════════════
 
-  // 관리자 탭의 "문서생성" — 지정한 날짜의 roster/checkins를 읽어 docGen* 상태를 채운다.
-  window.openDocGenForDate = async function () {
-    const dateInput = document.getElementById('docgen-date');
-    const date = (dateInput && dateInput.value) || todayKST();
-    const statusEl = document.getElementById('docgen-status');
-    const btn = document.getElementById('btn-open-docgen');
-    if (btn) btn.disabled = true;
-    if (statusEl) { statusEl.textContent = '명단 불러오는 중...'; statusEl.style.display = 'block'; }
-    try {
-      const sid = `${ORG_ID}_${date}`;
-      const [rosterSnap, checkinsSnap] = await Promise.all([
-        getDocs(collection(db, 'sessions', sid, 'roster')),
-        getDocs(collection(db, 'sessions', sid, 'checkins')),
-      ]);
-      if (rosterSnap.empty) {
-        if (statusEl) statusEl.textContent = '그 날짜에 출석 기록이 없습니다.';
-        return;
-      }
-      docGenStudents = rosterSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      docGenSessionLabel = date + ' 출석 명단';
-      docGenSessionDate = date;
-
-      // studentId -> { period: '시각' } — qr-admin의 loadSessionDetail과 같은 형태로 만든다.
-      const map = {};
-      checkinsSnap.forEach(d => {
-        const c = d.data();
-        const key = c.kakaoId;
-        if (!map[key]) map[key] = {};
-        let timeStr = '';
-        if (c.checkedAt && c.checkedAt.toDate) {
-          timeStr = c.checkedAt.toDate().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' });
-        } else if (c.checkedAt) {
-          timeStr = String(c.checkedAt);
-        }
-        if (c.makeupApproved) timeStr = timeStr + ' (서명출석)';
-        map[key][c.period] = timeStr;
-      });
-      docGenCheckinMap = map;
-
-      if (statusEl) statusEl.style.display = 'none';
-      openDocGenModal();
-    } catch (e) {
-      if (statusEl) statusEl.textContent = '불러오기 실패: ' + e.message;
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  };
 
   let docGenStudents = []; // 현재 열려있는 세션의 학생 목록: [{id, name}]
   let docGenSessionLabel = '';
@@ -1302,6 +1255,263 @@
     }
   };
 
+
+  /* ══════════════════════════════════════════════════════════════════
+     문서 합성 — [출석 데이터] + [명단 파일] = [최종본]
+     QR로는 면허번호·근무처를 알 수 없어서, 학회가 따로 들고 있는 신청자 명단을
+     올려 이름+휴대폰번호로 맞붙인다. 맞붙인 값은 studentExtraInfo에 저장되고
+     문서생성(confirmDocGen)이 그걸 읽어 엑셀에 채운다.
+     ══════════════════════════════════════════════════════════════════ */
+  let craftDates = [];        // [{date, count}] 수업이 있었던 날
+  let craftPickedDate = null;
+  let craftFileRows = [];     // 업로드 파일에서 읽은 [{name, phone, workplace, license}]
+  let craftMatches = null;    // 매칭 결과
+
+  // 휴대폰번호는 표기가 제각각(010-1234-5678 / 01012345678 / 공백)이라 숫자만 남겨 비교한다.
+  const craftDigits = (v) => String(v ?? '').replace(/\D/g, '');
+  const craftName = (v) => String(v ?? '').replace(/\s/g, '');
+
+  window.initCraftPage = async function () {
+    await loadCraftDates();
+    renderCraftState();
+  };
+
+  // 수업이 있었던 날 = 이 기관의 세션 문서들. 최근 것부터 보여준다.
+  async function loadCraftDates() {
+    const el = document.getElementById('craft-datelist');
+    if (!el) return;
+    try {
+      const snap = await getDocs(query(collection(db, 'sessions'), where('orgId', '==', ORG_ID)));
+      craftDates = snap.docs
+        .map(d => ({ id: d.id, date: d.data().date || d.id.split('_').pop() }))
+        .filter(x => x.date)
+        .sort((a, b) => b.date.localeCompare(a.date));
+      if (!craftDates.length) {
+        el.innerHTML = '<div class="hist-empty" style="padding:14px 0;">수업 기록이 없습니다.</div>';
+        return;
+      }
+      el.innerHTML = craftDates.map(d =>
+        `<div class="craft-date" data-date="${escapeHtml(d.date)}" onclick="pickCraftDate('${escapeHtml(d.date)}')">
+           <span>${escapeHtml(d.date)}</span><span class="craft-date-n">보기</span>
+         </div>`).join('');
+    } catch (e) {
+      el.innerHTML = `<div class="hist-empty" style="padding:14px 0;">목록 조회 실패: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // 날짜를 고르면 그날 명단(roster)과 체크인을 읽어 docGen* 상태를 채운다.
+  window.pickCraftDate = async function (date) {
+    craftPickedDate = date;
+    document.querySelectorAll('.craft-date').forEach(n =>
+      n.classList.toggle('on', n.dataset.date === date));
+    const picked = document.getElementById('craft-att-picked');
+    picked.textContent = '불러오는 중...';
+    try {
+      const sid = `${ORG_ID}_${date}`;
+      const [rosterSnap, checkinsSnap] = await Promise.all([
+        getDocs(collection(db, 'sessions', sid, 'roster')),
+        getDocs(collection(db, 'sessions', sid, 'checkins')),
+      ]);
+      docGenStudents = rosterSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      docGenSessionLabel = date + ' 출석 명단';
+      docGenSessionDate = date;
+
+      const map = {};
+      checkinsSnap.forEach(d => {
+        const c = d.data();
+        if (!map[c.kakaoId]) map[c.kakaoId] = {};
+        let t = '';
+        if (c.checkedAt && c.checkedAt.toDate) {
+          t = c.checkedAt.toDate().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' });
+        } else if (c.checkedAt) t = String(c.checkedAt);
+        if (c.makeupApproved) t += ' (서명출석)';
+        map[c.kakaoId][c.period] = t;
+      });
+      docGenCheckinMap = map;
+
+      const signed = docGenStudents.filter(s => s.startSignature || s.endSignature).length;
+      picked.innerHTML = docGenStudents.length
+        ? `<b>${docGenStudents.length}명</b> · 서명 ${signed}명 · 체크인 ${checkinsSnap.size}건`
+        : '그 날짜에 출석 기록이 없습니다.';
+      craftMatches = null;   // 날짜가 바뀌면 매칭을 다시 해야 한다
+      recomputeCraftMatches();
+    } catch (e) {
+      picked.textContent = '불러오기 실패: ' + e.message;
+      docGenStudents = [];
+    }
+    renderCraftState();
+  };
+
+  window.onCraftFilePicked = async function (ev) {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    const picked = document.getElementById('craft-file-picked');
+    picked.textContent = '읽는 중...';
+    try {
+      if (!window.XLSX) await craftLoadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
+      craftFileRows = parseRosterFile(rows);
+      picked.innerHTML = craftFileRows.length
+        ? `<b>${escapeHtml(file.name)}</b><br>${craftFileRows.length}명 읽음`
+        : `<span style="color:#b91c1c;">${escapeHtml(file.name)}<br>이름이 있는 행을 찾지 못했습니다.</span>`;
+      recomputeCraftMatches();
+    } catch (e) {
+      picked.innerHTML = `<span style="color:#b91c1c;">읽기 실패: ${escapeHtml(e.message)}</span>`;
+      craftFileRows = [];
+    }
+    renderCraftState();
+  };
+
+  function craftLoadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src; s.onload = res; s.onerror = () => rej(new Error('라이브러리 로드 실패'));
+      document.head.appendChild(s);
+    });
+  }
+
+  /* 명단 파일 읽기 — 열 순서나 여분의 열에 기대지 않는다. 헤더 행을 찾아
+     '성함/이름', '폰/휴대폰/연락처', '소속/근무처', '면허' 가 들어간 열을 각각 집는다. */
+  function parseRosterFile(rows) {
+    const has = (s, ...keys) => keys.some(k => String(s).replace(/\s/g, '').includes(k));
+    let hdr = -1, col = {};
+    for (let i = 0; i < Math.min(rows.length, 30); i++) {
+      const r = rows[i] || [];
+      const c = {};
+      r.forEach((v, j) => {
+        if (c.name === undefined && has(v, '성함', '성명', '이름')) c.name = j;
+        else if (c.phone === undefined && has(v, '폰번호', '휴대폰', '연락처', '전화')) c.phone = j;
+        else if (c.workplace === undefined && has(v, '소속', '근무처', '기관')) c.workplace = j;
+        else if (c.license === undefined && has(v, '면허')) c.license = j;
+      });
+      if (c.name !== undefined && (c.license !== undefined || c.workplace !== undefined)) { hdr = i; col = c; break; }
+    }
+    if (hdr < 0) return [];
+
+    const out = [];
+    for (let i = hdr + 1; i < rows.length; i++) {
+      const r = rows[i] || [];
+      const name = craftName(r[col.name]);
+      if (!name) continue;                      // 빈 줄(NO만 있는 행)은 건너뛴다
+      out.push({
+        name,
+        phone: craftDigits(col.phone !== undefined ? r[col.phone] : ''),
+        workplace: String((col.workplace !== undefined ? r[col.workplace] : '') ?? '').trim(),
+        license: String((col.license !== undefined ? r[col.license] : '') ?? '').trim(),
+      });
+    }
+    return out;
+  }
+
+  /* 매칭 — 기준은 이름 + 휴대폰번호.
+     실제 파일을 보면 휴대폰번호가 비어 있는 행이 많아, 번호가 없으면 이름만으로
+     맞춰본다. 다만 같은 이름이 둘 이상이면 누구인지 단정할 수 없으므로 보류하고
+     관리자가 보도록 남긴다(임의로 붙이면 남의 면허번호가 들어간다). */
+  function recomputeCraftMatches() {
+    if (!docGenStudents.length || !craftFileRows.length) { craftMatches = null; return; }
+
+    const byPhone = new Map();
+    const byName = new Map();
+    craftFileRows.forEach(r => {
+      if (r.phone) byPhone.set(`${r.name}|${r.phone}`, r);
+      if (!byName.has(r.name)) byName.set(r.name, []);
+      byName.get(r.name).push(r);
+    });
+
+    const matched = [], ambiguous = [], missing = [];
+    docGenStudents.forEach(s => {
+      const nm = craftName(s.name), ph = craftDigits(s.phone);
+      const exact = ph ? byPhone.get(`${nm}|${ph}`) : null;
+      if (exact) { matched.push({ student: s, row: exact, how: '이름+번호' }); return; }
+      const sameName = byName.get(nm) || [];
+      if (sameName.length === 1) {
+        // 파일에 번호가 없어 이름으로만 맞춘 경우 — 번호가 서로 있는데 다르면 붙이지 않는다.
+        const r = sameName[0];
+        if (r.phone && ph && r.phone !== ph) { ambiguous.push({ student: s, rows: sameName, why: '번호 불일치' }); return; }
+        matched.push({ student: s, row: r, how: r.phone ? '이름+번호' : '이름만' });
+      } else if (sameName.length > 1) {
+        ambiguous.push({ student: s, rows: sameName, why: '동명이인' });
+      } else {
+        missing.push({ student: s });
+      }
+    });
+    craftMatches = { matched, ambiguous, missing };
+  }
+
+  function renderCraftState() {
+    const attFilled = docGenStudents.length > 0;
+    const fileFilled = craftFileRows.length > 0;
+    document.getElementById('craft-slot-att').classList.toggle('filled', attFilled);
+    document.getElementById('craft-slot-file').classList.toggle('filled', fileFilled);
+    document.getElementById('craft-att-badge').textContent = attFilled ? `${docGenStudents.length}명` : '비어있음';
+    document.getElementById('craft-file-badge').textContent = fileFilled ? `${craftFileRows.length}명` : '비어있음';
+
+    const btn = document.getElementById('craft-btn-make');
+    const sub = document.getElementById('craft-result-sub');
+    const note = document.getElementById('craft-result-note');
+    // 명단 파일은 선택이다 — 없으면 면허번호 칸만 빈 채로 문서가 나온다.
+    btn.disabled = !attFilled;
+    if (!attFilled) {
+      sub.textContent = '먼저 왼쪽에서 날짜를 고르세요.';
+      note.textContent = '';
+    } else if (!fileFilled) {
+      sub.textContent = '명단 파일 없이도 만들 수 있습니다(면허번호·근무처는 빈 칸).';
+      note.textContent = '';
+    } else if (craftMatches) {
+      sub.textContent = '준비됐습니다.';
+      note.innerHTML = `매칭 <span class="mt-ok">${craftMatches.matched.length}명</span>`
+        + (craftMatches.ambiguous.length ? ` · 확인필요 <span class="mt-warn">${craftMatches.ambiguous.length}명</span>` : '')
+        + (craftMatches.missing.length ? ` · 못찾음 <span class="mt-no">${craftMatches.missing.length}명</span>` : '');
+    }
+    renderCraftMatchDetail();
+  }
+
+  function renderCraftMatchDetail() {
+    const el = document.getElementById('craft-match-detail');
+    if (!craftMatches) { el.innerHTML = ''; return; }
+    const { matched, ambiguous, missing } = craftMatches;
+    const row = (name, right, cls) => `<tr><td>${escapeHtml(name)}</td><td class="${cls}">${right}</td></tr>`;
+    el.innerHTML = `
+      <div style="font-size:14px;font-weight:800;margin-bottom:8px;">매칭 결과</div>
+      <table class="mt-tbl">
+        <thead><tr><th style="width:120px;">참석자</th><th>결과</th></tr></thead>
+        <tbody>
+          ${matched.map(m => row(m.student.name,
+            `<span class="mt-ok">붙임</span> · 면허 ${escapeHtml(m.row.license || '-')} · ${escapeHtml(m.row.workplace || '-')}`
+            + `<span style="color:var(--muted);font-size:11px;"> (${m.how})</span>`, '')).join('')}
+          ${ambiguous.map(a => row(a.student.name,
+            `<span class="mt-warn">확인 필요</span> · ${escapeHtml(a.why)} — 자동으로 붙이지 않았습니다`, '')).join('')}
+          ${missing.map(m => row(m.student.name,
+            `<span class="mt-no">파일에 없음</span> · 면허번호 빈 칸으로 나갑니다`, '')).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // 매칭된 값을 저장한 뒤 기존 문서생성 모달을 연다(엑셀 생성 로직은 그대로 재사용).
+  window.craftMakeDocument = async function () {
+    const btn = document.getElementById('craft-btn-make');
+    btn.disabled = true;
+    const sub = document.getElementById('craft-result-sub');
+    try {
+      if (craftMatches && craftMatches.matched.length) {
+        sub.textContent = '면허번호 저장 중...';
+        await Promise.all(craftMatches.matched.map(m =>
+          setDoc(doc(db, 'studentExtraInfo', m.student.id), {
+            fields: { '면허번호': m.row.license || '', '근무처명': m.row.workplace || '' },
+            name: m.student.name || '', phone: m.student.phone || '',
+            updatedAt: serverTimestamp(),
+          }, { merge: true })));
+      }
+      sub.textContent = '준비됐습니다.';
+      openDocGenModal();
+    } catch (e) {
+      sub.textContent = '저장 실패: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
   // ── 로그인 상태 진입점 ──
   onAuthStateChanged(auth, async (user) => {
     // 가입 처리 중이면 doSignup이 admins 문서 저장까지 마치고 직접 대시보드로 진입시킨다
@@ -1521,6 +1731,32 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
   .tl-row.compact .tl-class{padding:3px 6px;font-size:13px;}
 }
 
+/* 문서 합성 — [출석 데이터] + [명단 파일] = [최종본]. 무엇이 채워졌고 무엇이
+   비었는지가 한눈에 보여야 해서, 칸마다 상태 배지를 달고 채워지면 색이 들어온다. */
+.craft-row{display:grid;grid-template-columns:1fr 34px 1fr 34px 1fr;gap:10px;align-items:stretch;}
+.craft-slot{border:2px dashed var(--border);border-radius:14px;padding:16px;background:var(--subtle);display:flex;flex-direction:column;min-width:0;}
+.craft-slot.filled{border-style:solid;border-color:var(--brand);background:var(--brand-xlight);}
+.craft-slot-head{font-size:15px;font-weight:800;color:var(--text);display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.craft-badge{font-size:11px;font-weight:800;padding:3px 8px;border-radius:20px;background:#e7e5ee;color:#6b6b76;white-space:nowrap;}
+.craft-slot.filled .craft-badge{background:var(--brand);color:#fff;}
+.craft-slot-sub{font-size:12px;color:var(--muted);margin:6px 0 12px;line-height:1.45;}
+.craft-op{display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:var(--muted);}
+.craft-datelist{flex:1;min-height:120px;max-height:190px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:10px;}
+.craft-date{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;font-size:13px;font-weight:700;cursor:pointer;border-bottom:1px solid var(--border);}
+.craft-date:last-child{border-bottom:none;}
+.craft-date:hover{background:var(--brand-xlight);}
+.craft-date.on{background:var(--brand);color:#fff;}
+.craft-date-n{font-size:12px;font-weight:700;opacity:.75;}
+.craft-picked{margin-top:10px;font-size:12px;color:var(--text);line-height:1.5;}
+.craft-slot-result{justify-content:space-between;}
+/* 매칭 결과 — 못 붙은 사람을 관리자가 바로 알아볼 수 있어야 한다. */
+.mt-tbl{width:100%;border-collapse:collapse;font-size:13px;}
+.mt-tbl th{background:var(--subtle);padding:8px 10px;text-align:left;font-weight:800;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);}
+.mt-tbl td{padding:8px 10px;border-bottom:1px solid var(--border);}
+.mt-ok{color:var(--brand);font-weight:800;}
+.mt-warn{color:#b45309;font-weight:800;}
+.mt-no{color:#b91c1c;font-weight:800;}
+
 /* 조퇴 명단 — 미체크(붉은색)와 헷갈리지 않게 중립 회색 톤으로 둔다. */
 .el-label{color:#6b6b76;margin-top:4px;}
 .el-list{display:flex;flex-direction:column;gap:5px;padding:6px;border-radius:10px;background:var(--subtle);border:1px solid var(--border);max-height:150px;overflow-y:auto;}
@@ -1701,20 +1937,45 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
       </div>
     </div>
 
-    <div class="hist-detail-card" style="max-width:900px;margin:24px auto 0;">
+    <!-- 문서 자동생성 — [출석 데이터] + [명단 파일] = [최종본] 합성 형태.
+         왼쪽은 QR로 이미 쌓인 것, 오른쪽은 면허번호·근무처처럼 QR로는 알 수 없는 것. -->
+    <div class="hist-detail-card" style="max-width:1080px;margin:24px auto 0;">
       <div style="font-size:18px;font-weight:800;color:var(--brand);margin-bottom:8px;">문서 자동생성</div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;">날짜를 고르고 불러오면 그날 참석자 중 원하는 사람만 선택해서 제출용 엑셀(서명 포함)을 받을 수 있습니다.</div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        <label class="auth-form-label" style="margin:0;">날짜</label>
-        <input type="date" id="docgen-date" class="auth-input" style="margin:0;width:auto;">
-        <button class="btn-primary" id="btn-open-docgen" onclick="openDocGenForDate()">명단 불러오기</button>
-      </div>
-      <div id="docgen-status" class="hist-empty" style="display:none;text-align:left;padding:10px 0 0;"></div>
-    </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:18px;">출석 기록에 면허번호·근무처를 합쳐 제출용 엑셀을 만듭니다. 두 칸을 채우면 최종본을 받을 수 있습니다.</div>
 
-    <div class="hist-detail-card" style="max-width:900px;margin:24px auto 0;">
-      <div style="font-size:18px;font-weight:800;color:var(--brand);margin-bottom:8px;">수업 기록 관리</div>
-      <div class="hist-empty">준비중입니다.</div>
+      <div class="craft-row">
+        <!-- ① 출석 데이터 -->
+        <div class="craft-slot" id="craft-slot-att">
+          <div class="craft-slot-head">① 출석 데이터<span class="craft-badge" id="craft-att-badge">비어있음</span></div>
+          <div class="craft-slot-sub">수업이 있었던 날짜를 고르세요. QR과 서명이 이미 들어 있습니다.</div>
+          <div class="craft-datelist" id="craft-datelist"><div class="hist-empty" style="padding:14px 0;">불러오는 중...</div></div>
+          <div class="craft-picked" id="craft-att-picked"></div>
+        </div>
+
+        <div class="craft-op">+</div>
+
+        <!-- ② 명단 파일 -->
+        <div class="craft-slot" id="craft-slot-file">
+          <div class="craft-slot-head">② 명단 파일<span class="craft-badge" id="craft-file-badge">비어있음</span></div>
+          <div class="craft-slot-sub">성함·폰번호·소속·면허번호가 있는 엑셀을 올리면 이름과 휴대폰번호로 자동 매칭합니다.</div>
+          <input type="file" id="craft-file" accept=".xlsx,.xls" style="display:none;" onchange="onCraftFilePicked(event)">
+          <button class="btn-primary" style="width:100%;" onclick="document.getElementById('craft-file').click()">엑셀 파일 선택</button>
+          <div class="craft-picked" id="craft-file-picked"></div>
+        </div>
+
+        <div class="craft-op">=</div>
+
+        <!-- ③ 최종본 -->
+        <div class="craft-slot craft-slot-result">
+          <div class="craft-slot-head">③ 최종본</div>
+          <div class="craft-slot-sub" id="craft-result-sub">두 칸을 모두 채우면 만들 수 있습니다.</div>
+          <button class="btn-primary" id="craft-btn-make" style="width:100%;" disabled onclick="craftMakeDocument()">문서 만들기</button>
+          <div class="craft-picked" id="craft-result-note"></div>
+        </div>
+      </div>
+
+      <div id="craft-match-detail" style="margin-top:18px;"></div>
+      <div id="docgen-status" class="hist-empty" style="display:none;text-align:left;padding:10px 0 0;"></div>
     </div>
   </div>
 </div>

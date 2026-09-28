@@ -8,7 +8,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-  import { getFirestore, doc, getDoc, setDoc, collection, query, where, orderBy, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteField, collection, query, where, orderBy, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
   // 학생 웹 — mobile-app의 QrMainScreen.js/qrAttendance.js/SimpleSignatureModal.js가 검증한
   // UX 흐름(스캔→시작서명 강제→체크인목록→종료서명 강제→구제요청 배너)만 개념으로 가져와
@@ -641,8 +641,12 @@
 
     // 조퇴 버튼은 '출석 중이고 아직 종료 서명 전'일 때만 — 이미 서명했으면 나갈 일이 없고,
     // 한 번도 안 찍었으면 인정받을 교시 자체가 없다.
+    const earlyLeft = !!(rosterStatus && rosterStatus.earlyLeaveAt);
     const btn = document.getElementById('btn-early-leave');
-    if (btn) btn.hidden = !(checkins.length > 0 && !endSig);
+    if (btn) btn.hidden = earlyLeft || !(checkins.length > 0 && !endSig);
+    // 조퇴취소는 조퇴 상태일 때만 — 조퇴하기와 항상 교대로만 보인다.
+    const cancelBtn = document.getElementById('btn-cancel-early-leave');
+    if (cancelBtn) cancelBtn.hidden = !earlyLeft;
   }
 
   // p교시는 앞(p)과 뒤(p+1) 지점을 모두 찍어야 이수 — 출석현황 표와 같은 규칙을 쓴다.
@@ -688,6 +692,34 @@
     earlyLeavePeriod = done.length ? done[done.length - 1] : 0;
     closeEarlyLeave();
     openSignatureModal('end', '종료 서명 (조퇴)', false);
+  };
+
+  // ── 조퇴취소 — 실수/변심으로 되돌릴 때. 종료 서명을 지워야 다시 조퇴하기가 뜬다. ──
+  window.openCancelEarlyLeave = function () {
+    document.getElementById('cancel-early-leave-modal').hidden = false;
+  };
+
+  window.closeCancelEarlyLeave = function () {
+    document.getElementById('cancel-early-leave-modal').hidden = true;
+  };
+
+  window.confirmCancelEarlyLeave = async function () {
+    const btn = document.getElementById('btn-cancel-early-leave-confirm');
+    await withBusy(btn, '취소하는 중', async () => {
+      try {
+        await updateDoc(doc(db, 'sessions', currentSessionId, 'roster', String(kakaoId)), {
+          earlyLeaveAt: deleteField(),
+          earlyLeavePeriod: deleteField(),
+          endSignature: deleteField(),
+          endSignedAt: deleteField(),
+        });
+        closeCancelEarlyLeave();
+        showToast('조퇴가 취소되었습니다 ✓', 'success');
+        await Promise.all([loadRosterStatus(), loadCheckins()]);
+      } catch (e) {
+        showToast('조퇴취소 실패: ' + e.message, 'error');
+      }
+    });
   };
 
   // ── 구제요청(서명출석) 배너 ──
@@ -858,6 +890,9 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 /* 조퇴 — 되돌리기 어려운 동작이라 붉은 톤으로, 다만 오인 클릭을 부르지 않게 작게 둔다. */
 .early-leave-btn{width:100%;border:none;border-top:1px solid #fecaca;background:#fef2f2;color:#b91c1c;padding:9px 0;font-size:13px;font-weight:800;cursor:pointer;}
 .early-leave-btn:hover{background:#fee2e2;}
+/* 조퇴취소 — 조퇴하기와 같은 자리·크기를 쓰되, 되돌리는 동작임을 파란 톤으로 구분한다. */
+.cancel-early-leave-btn{border-top-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;}
+.cancel-early-leave-btn:hover{background:#dbeafe;}
 .early-leave-card{gap:14px;}
 .early-leave-body{text-align:center;}
 .el-chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:12px;}
@@ -869,6 +904,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .early-leave-btns .auth-btn{flex:1;margin:0;}
 .early-leave-cancel{background:var(--subtle);color:var(--text);border:1.5px solid var(--border);}
 .early-leave-go{background:#b91c1c;color:#fff;border:none;}
+.cancel-early-leave-go{background:#1d4ed8;}
 .sig-preview-body img{max-height:100%;max-width:100%;object-fit:contain;}
 /* 진한 단색은 너무 튀어서 연한 브랜드 톤으로 낮추고, 카메라 아이콘은 크게 키운다. */
 .qr-scan-btn{flex-shrink:0;width:110px;background:var(--brand-xlight);color:var(--brand);border:1.5px solid #bcaef0;border-radius:16px;font-size:14px;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;line-height:1.3;}
@@ -1002,6 +1038,8 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
         <div class="sig-preview-body" id="sig-preview-end"><span class="empty-text">대기중</span></div>
         <!-- 교시가 끝나기 전에 나가는 학생용 — 여기서 종료 서명을 해야 그때까지가 인정된다. -->
         <button class="early-leave-btn" id="btn-early-leave" hidden onclick="openEarlyLeave()">조퇴하기</button>
+        <!-- 조퇴 후 마음이 바뀐 학생용 — 조퇴하기와 같은 자리·크기, 서로 교대로만 보인다. -->
+        <button class="early-leave-btn cancel-early-leave-btn" id="btn-cancel-early-leave" hidden onclick="openCancelEarlyLeave()">조퇴취소</button>
       </div>
     </div>
     <button class="qr-scan-btn" onclick="openScanner()"><span class="qr-scan-icon">📷</span>QR 스캔</button>
@@ -1026,6 +1064,17 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
     <div class="early-leave-btns">
       <button class="auth-btn early-leave-cancel" onclick="closeEarlyLeave()">취소</button>
       <button class="auth-btn early-leave-go" onclick="confirmEarlyLeave()">조퇴하기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 조퇴취소 확인 — 기존 조퇴 확인창과 동일한 모양새, 되돌리는 동작임을 문구로만 구분. -->
+<div id="cancel-early-leave-modal" class="modal-overlay" hidden>
+  <div class="sig-card early-leave-card">
+    <div class="sig-title">조퇴를 취소하고 계속 수강하시겠습니까?</div>
+    <div class="early-leave-btns">
+      <button class="auth-btn early-leave-cancel" onclick="closeCancelEarlyLeave()">취소</button>
+      <button class="auth-btn early-leave-go cancel-early-leave-go" id="btn-cancel-early-leave-confirm" onclick="confirmCancelEarlyLeave()">조퇴취소</button>
     </div>
   </div>
 </div>
