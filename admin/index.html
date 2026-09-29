@@ -1748,7 +1748,9 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 /* 명단 두 개를 좌(미체크)/우(체크)로 나란히 — 각자 박스 안에서만 스크롤된다. */
 .att-lists{display:flex;gap:10px;flex:1;min-height:0;}
 .att-col{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;}
-.att-list{overflow-y:auto;display:flex;flex-direction:column;gap:5px;flex:1;min-height:70px;padding:6px;border-radius:10px;background:var(--subtle);border:1px solid var(--border);}
+/* max-height가 없으면 인원수만큼 끝없이 늘어난다 — 2,500명 강의에서 패널이
+   78,000px까지 커지고 페이지 전체가 밀렸다. 칸을 고정하고 안에서 스크롤한다. */
+.att-list{overflow-y:auto;display:flex;flex-direction:column;gap:5px;flex:1;min-height:70px;max-height:430px;padding:6px;border-radius:10px;background:var(--subtle);border:1px solid var(--border);overscroll-behavior:contain;}
 .att-col-absent .att-list{background:#fef2f2;border-color:#fecaca;}
 .att-col-absent .roster-item{background:#fff;border:1px solid #fecaca;}
 .att-col-done .roster-item{background:#fff;border:1px solid #ddd9ff;}
@@ -1809,7 +1811,8 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 
 /* 조퇴 명단 — 미체크(붉은색)와 헷갈리지 않게 중립 회색 톤으로 둔다. */
 .el-label{color:#6b6b76;margin-top:4px;}
-.el-list{display:flex;flex-direction:column;gap:5px;padding:6px;border-radius:10px;background:var(--subtle);border:1px solid var(--border);max-height:150px;overflow-y:auto;}
+/* 조퇴는 참고용이라 2~3명만 보이면 충분하다 — 나머지는 안에서 스크롤. */
+.el-list{display:flex;flex-direction:column;gap:5px;padding:6px;border-radius:10px;background:var(--subtle);border:1px solid var(--border);max-height:150px;overflow-y:auto;overscroll-behavior:contain;}
 .el-item{background:#fff;border:1px solid var(--border);}
 .el-upto{color:#6b6b76;font-weight:700;font-size:18px;}
 
