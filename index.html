@@ -891,8 +891,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .early-leave-btn{width:100%;border:none;border-top:1px solid #fecaca;background:#fef2f2;color:#b91c1c;padding:9px 0;font-size:13px;font-weight:800;cursor:pointer;}
 .early-leave-btn:hover{background:#fee2e2;}
 /* 조퇴취소 — 조퇴하기와 같은 자리·크기를 쓰되, 되돌리는 동작임을 파란 톤으로 구분한다. */
-.cancel-early-leave-btn{border-top-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;}
-.cancel-early-leave-btn:hover{background:#dbeafe;}
+/* 조퇴취소는 "아직 되돌릴 수 있다"를 알리는 버튼이라, 조퇴하기(붉은색)와
+   구분되면서도 눈에 먼저 들어와야 한다 — 채운 주황으로 둔다. */
+.cancel-early-leave-btn{border-top-color:#c2410c;background:#f97316;color:#fff;}
+.cancel-early-leave-btn:hover{background:#ea580c;}
 .early-leave-card{gap:14px;}
 .early-leave-body{text-align:center;}
 .el-chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:12px;}
