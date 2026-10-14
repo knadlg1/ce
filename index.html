@@ -394,9 +394,9 @@
       if (sid) setCurrentSessionId(sid);
 
       if (data.success) {
-        showToast(scannedPeriod ? `✅ ${scannedPeriod}교시 출석 체크 완료!` : '출석 체크 완료!', 'success');
+        showToast(scannedPeriod ? `✅ ${scannedPeriod}세션 출석 체크 완료!` : '출석 체크 완료!', 'success');
         await loadCheckins();
-        // 배열 순서가 아니라 방금 찍은 교시로 집어야 정확하다(구제승인 등으로 순서가 어긋날 수 있다).
+        // 배열 순서가 아니라 방금 찍은 세션으로 집어야 정확하다(구제승인 등으로 순서가 어긋날 수 있다).
         popupForPeriod(scannedPeriod, 'success');
         // 서로 무관한 조회라 순차로 돌릴 이유가 없다(실측 258ms -> 65ms).
         await Promise.all([loadRosterStatus(), loadSchedule()]);
@@ -417,7 +417,7 @@
     }
   }
 
-  // 방금 찍은 교시의 체크인 시각을 찾아 결과 팝업을 띄운다(성공/중복 공통).
+  // 방금 찍은 세션의 체크인 시각을 찾아 결과 팝업을 띄운다(성공/중복 공통).
   function popupForPeriod(period, kind) {
     const c = checkins.find(x => x.period === period);
     if (!c || !c.checkedAt) return;
@@ -456,10 +456,10 @@
     }
   }
 
-  // 교시 하나를 한 줄로 — [📷 찍은시각] - N교시.
-  // 스캔 지점 p는 p교시 바로 앞이라 그 교시 행의 시각으로 쓴다. 앞뒤 시각을 양쪽에
-  // 다 적던 이전 방식은 같은 시각이 두 행에 중복돼 8·9교시까지 가면 읽기 힘들었다.
-  // p교시의 이수 여부는 그 뒤 지점(p+1)을 찍었는지로 판단해 '이수완료' 도장으로 보여준다.
+  // 세션 하나를 한 줄로 — [📷 찍은시각] - N세션.
+  // 스캔 지점 p는 p세션 바로 앞이라 그 세션 행의 시각으로 쓴다. 앞뒤 시각을 양쪽에
+  // 다 적던 이전 방식은 같은 시각이 두 행에 중복돼 8·9세션까지 가면 읽기 힘들었다.
+  // p세션의 이수 여부는 그 뒤 지점(p+1)을 찍었는지로 판단해 '이수완료' 도장으로 보여준다.
   function fmtCheckedAtShort(ts) {
     try {
       const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts);
@@ -474,19 +474,19 @@
   function renderCheckins() {
     const el = document.getElementById('checkin-list');
     const maxChecked = checkins.length ? Math.max(...checkins.map(c => c.period)) : 0;
-    // 아직 하나도 안 찍었어도 1교시 행은 보여줘야 "무엇을 찍어야 하는지"가 전달된다.
+    // 아직 하나도 안 찍었어도 1세션 행은 보여줘야 "무엇을 찍어야 하는지"가 전달된다.
     const rowCount = Math.max(1, maxChecked);
 
-    // 마지막 줄의 오른쪽이 교시가 아닌 경우 — 그날 일정이 거기서 끝났다는 표시다.
-    // 4교시 뒤에 종료 QR을 찍으면 지점 5가 생기는데 5교시 수업은 없으므로,
-    // '5교시(회색)' 대신 끝났음을 그대로 보여줘야 헷갈리지 않는다.
+    // 마지막 줄의 오른쪽이 세션이 아닌 경우 — 그날 일정이 거기서 끝났다는 표시다.
+    // 4세션 뒤에 종료 QR을 찍으면 지점 5가 생기는데 5세션 수업은 없으므로,
+    // '5세션(회색)' 대신 끝났음을 그대로 보여줘야 헷갈리지 않는다.
     // 정상 종료면 '교육종료', 조퇴로 끝냈으면 '조퇴완료'(표시 방식은 동일).
     const earlyLeft = !!(rosterStatus && rosterStatus.earlyLeaveAt);
     const endScanned = earlyLeft || !!(rosterStatus && rosterStatus.endScannedAt);
 
     let html = '';
     for (let p = 1; p <= rowCount; p++) {
-      const c = checkins.find(x => x.period === p);       // p교시 바로 앞에서 찍은 것
+      const c = checkins.find(x => x.period === p);       // p세션 바로 앞에서 찍은 것
       const done = !!c && checkins.some(x => x.period === p + 1); // 뒤까지 찍어야 이수
       const isEndRow = endScanned && p === rowCount;
       const time = c
@@ -497,7 +497,7 @@
         + '<div class="ck-dash">-</div>'
         + (isEndRow
           ? `<div class="ck-period ck-end"><span>${earlyLeft ? '조퇴완료' : '교육종료'}</span></div>`
-          : `<div class="ck-period${done ? ' done' : ''}"><span>${p}교시</span>`
+          : `<div class="ck-period${done ? ' done' : ''}"><span>${p}세션</span>`
             + (done ? '<span class="ck-stamp">이수완료</span>' : '')
             + '</div>')
         + '</div>';
@@ -510,7 +510,7 @@
   let sigDrawing = false;
   let sigHasContent = false;
   let sigModalKind = null; // 'start' | 'end' | 'makeup'
-  // null이 아니면 이번 종료 서명이 '조퇴'라는 뜻이고, 값은 인정된 마지막 교시다.
+  // null이 아니면 이번 종료 서명이 '조퇴'라는 뜻이고, 값은 인정된 마지막 세션이다.
   let earlyLeavePeriod = null;
 
   function initSignatureCanvas() {
@@ -581,7 +581,7 @@
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             kakaoId: String(kakaoId), sessionId: currentSessionId, type: sigModalKind, signature: base64,
-            // 조퇴로 시작한 종료 서명이면 그 사실과 인정 교시를 같이 보낸다.
+            // 조퇴로 시작한 종료 서명이면 그 사실과 인정 세션을 같이 보낸다.
             ...(sigModalKind === 'end' && earlyLeavePeriod !== null
               ? { earlyLeave: true, earlyLeavePeriod }
               : {}),
@@ -640,7 +640,7 @@
     endEl.innerHTML = endSig ? `<img src="data:image/png;base64,${endSig}">` : '<span class="empty-text">대기중</span>';
 
     // 조퇴 버튼은 '출석 중이고 아직 종료 서명 전'일 때만 — 이미 서명했으면 나갈 일이 없고,
-    // 한 번도 안 찍었으면 인정받을 교시 자체가 없다.
+    // 한 번도 안 찍었으면 인정받을 세션 자체가 없다.
     const earlyLeft = !!(rosterStatus && rosterStatus.earlyLeaveAt);
     const btn = document.getElementById('btn-early-leave');
     if (btn) btn.hidden = earlyLeft || !(checkins.length > 0 && !endSig);
@@ -649,7 +649,7 @@
     if (cancelBtn) cancelBtn.hidden = !earlyLeft;
   }
 
-  // p교시는 앞(p)과 뒤(p+1) 지점을 모두 찍어야 이수 — 출석현황 표와 같은 규칙을 쓴다.
+  // p세션은 앞(p)과 뒤(p+1) 지점을 모두 찍어야 이수 — 출석현황 표와 같은 규칙을 쓴다.
   function completedPeriods() {
     const has = (p) => checkins.some(x => x.period === p);
     const done = [];
@@ -675,9 +675,9 @@
     const done = completedPeriods();
     const body = document.getElementById('early-leave-body');
     body.innerHTML = done.length
-      ? `<div class="el-chips">${done.map(p => `<span class="el-chip">${p}교시</span>`).join('')}</div>`
-        + `<div class="el-note"><b>${done[done.length - 1]}교시</b>까지만 인정됩니다.</div>`
-      : '<div class="el-note el-none">아직 이수 완료된 교시가 없습니다.<br>지금 조퇴하면 인정되는 교시가 없습니다.</div>';
+      ? `<div class="el-chips">${done.map(p => `<span class="el-chip">${p}세션</span>`).join('')}</div>`
+        + `<div class="el-note"><b>${done[done.length - 1]}세션</b>까지만 인정됩니다.</div>`
+      : '<div class="el-note el-none">아직 이수 완료된 세션이 없습니다.<br>지금 조퇴하면 인정되는 세션이 없습니다.</div>';
     document.getElementById('early-leave-modal').hidden = false;
   };
 
@@ -745,7 +745,7 @@
     if (!makeupRequest) { el.hidden = true; return; }
     el.hidden = false;
     document.getElementById('makeup-banner-text').textContent =
-      `${makeupRequest.period}교시 출석 서명요청이 도착했어요. 탭해서 서명해주세요`;
+      `${makeupRequest.period}세션 출석 서명요청이 도착했어요. 탭해서 서명해주세요`;
   }
 
   window.openMakeupSignature = function () {
@@ -795,10 +795,10 @@
   }
 
   let timePopupTimer = null;
-  // period p의 스캔 지점은 "(p-1)교시와 p교시 사이" — p=1이면 교육 시작 전이다.
+  // period p의 스캔 지점은 "(p-1)세션과 p세션 사이" — p=1이면 교육 시작 전이다.
   function scanPointLabel(p) {
     if (!p) return '출석';
-    return p === 1 ? '교육 시작 전' : `${p - 1}교시 완료`;
+    return p === 1 ? '교육 시작 전' : `${p - 1}세션 완료`;
   }
   function showTimePopup(timeText, period, kind) {
     const el = document.getElementById('time-popup');
@@ -919,11 +919,11 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 
 /* ── 출석현황 세로 타임라인(관리자 화면 .tl-* 디자인을 세로로 변형) ── */
 .ck-table{display:flex;flex-direction:column;gap:6px;}
-/* 출석현황 — 교시당 한 행: [찍은시각] - N교시 - [찍은시각].
-   양옆 칸은 각각 그 교시의 앞/뒤 스캔 지점이고, 가운데가 교시다.
+/* 출석현황 — 세션당 한 행: [찍은시각] - N세션 - [찍은시각].
+   양옆 칸은 각각 그 세션의 앞/뒤 스캔 지점이고, 가운데가 세션이다.
    찍힌 칸은 QR 스캔 버튼(.qr-scan-btn)과 같은 연보라 배경/테두리로 칠해
    "이건 내가 찍은 것"이 같은 색 언어로 읽히게 한다. */
-/* 왼쪽=찍은 시각(한 줄), 오른쪽=교시. 교시 칸은 폭을 고정해 행끼리 세로로 줄을 맞춘다. */
+/* 왼쪽=찍은 시각(한 줄), 오른쪽=세션. 세션 칸은 폭을 고정해 행끼리 세로로 줄을 맞춘다. */
 .ck-row{display:grid;grid-template-columns:1fr 10px 134px;align-items:stretch;gap:5px;}
 .ck-cell{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:7px;padding:9px 8px;min-width:0;border-radius:14px;border:1.5px solid var(--border);background:#fafafc;}
 .ck-cell.done{background:var(--brand-xlight);border-color:#bcaef0;}
@@ -933,9 +933,9 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .ck-cell.done .ck-time{color:var(--brand);}
 .ck-dash{display:flex;align-items:center;justify-content:center;color:var(--border);font-size:12px;font-weight:800;}
 .ck-period{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:800;color:var(--muted);background:#fafafc;border:1.5px solid var(--border);border-radius:14px;padding:9px 6px;}
-/* 뒤 지점까지 찍어 이수된 교시만 색을 채운다 — 어디까지 인정됐는지 한눈에 보이도록. */
+/* 뒤 지점까지 찍어 이수된 세션만 색을 채운다 — 어디까지 인정됐는지 한눈에 보이도록. */
 .ck-period.done{background:var(--brand-xlight);border-color:#bcaef0;color:var(--brand);}
-/* 마지막 줄이 교시가 아니라 '교육 종료'일 때 — 끝났다는 게 한눈에 보이도록 붉게 채운다. */
+/* 마지막 줄이 세션이 아니라 '교육 종료'일 때 — 끝났다는 게 한눈에 보이도록 붉게 채운다. */
 .ck-period.ck-end{background:#b91c1c;border-color:#b91c1c;color:#fff;font-size:14px;}
 /* 이수완료는 붉은 도장처럼 — 살짝 기울여 찍은 느낌을 준다. */
 .ck-stamp{color:#dc2626;border:2px solid #dc2626;border-radius:5px;padding:1px 4px;font-size:10px;font-weight:900;letter-spacing:.5px;line-height:1.25;white-space:nowrap;transform:rotate(-7deg);}
@@ -1038,7 +1038,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
       <div class="sig-preview-box">
         <div class="sig-preview-header sig-preview-header-end">종료 서명</div>
         <div class="sig-preview-body" id="sig-preview-end"><span class="empty-text">대기중</span></div>
-        <!-- 교시가 끝나기 전에 나가는 학생용 — 여기서 종료 서명을 해야 그때까지가 인정된다. -->
+        <!-- 세션이 끝나기 전에 나가는 학생용 — 여기서 종료 서명을 해야 그때까지가 인정된다. -->
         <button class="early-leave-btn" id="btn-early-leave" hidden onclick="openEarlyLeave()">조퇴하기</button>
         <!-- 조퇴 후 마음이 바뀐 학생용 — 조퇴하기와 같은 자리·크기, 서로 교대로만 보인다. -->
         <button class="early-leave-btn cancel-early-leave-btn" id="btn-cancel-early-leave" hidden onclick="openCancelEarlyLeave()">조퇴취소</button>
@@ -1049,7 +1049,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 
   <div class="card">
     <div class="card-title">출석현황</div>
-    <div id="checkin-list" class="ck-table"><div class="empty-text">아직 체크한 교시가 없습니다.</div></div>
+    <div id="checkin-list" class="ck-table"><div class="empty-text">아직 체크한 세션이 없습니다.</div></div>
   </div>
 
   <div class="card">
@@ -1113,7 +1113,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 <!-- 스캔 직후 결과를 크게 띄운다. 일반 카메라로 찍으면 처리가 순식간이라
      제대로 찍혔는지 알기 어려워서, 시각뿐 아니라 "어느 지점을 찍었는지"까지 보여준다. -->
 <div id="time-popup" class="time-popup" hidden>
-  <div class="time-popup-where" id="time-popup-where">1교시 전</div>
+  <div class="time-popup-where" id="time-popup-where">1세션 전</div>
   <div class="time-popup-text" id="time-popup-text">09:30</div>
   <div class="time-popup-note" id="time-popup-note">출석 인정</div>
 </div>

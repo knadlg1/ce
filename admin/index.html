@@ -38,8 +38,8 @@
   let currentPeriod = null;
   let maxPeriod = 0;
   let isFinalPeriod = false;
-  // 타임라인에서 🏁(교육 종료) 지점을 그리려면 "몇 교시가 마지막인지" 번호 자체가 필요하다
-  // (isFinalPeriod는 "지금 보고 있는 교시가 마지막인가"만 알려줘서, 이전 교시로 이동하면
+  // 타임라인에서 🏁(교육 종료) 지점을 그리려면 "몇 세션이 마지막인지" 번호 자체가 필요하다
+  // (isFinalPeriod는 "지금 보고 있는 세션이 마지막인가"만 알려줘서, 이전 세션으로 이동하면
   // 정보가 사라진다). 세션 문서의 finalPeriod를 그대로 들고 있는다.
   let finalPeriodNum = null;
   let rotateInterval = null;
@@ -141,8 +141,7 @@
   window.showSignup = function () {
     document.getElementById('auth-wrap').querySelector('.auth-card').style.display = 'none';
     document.getElementById('signup-card').style.display = 'block';
-    if (!allOrgs.length) loadAllOrgs();
-    loadOrgsFromKma(); // 백그라운드 — 실패해도 Firestore 캐시만으로 계속 가입 가능
+    loadAllOrgs();
   };
 
   window.showLoginFromSignup = function () {
@@ -150,18 +149,27 @@
     document.getElementById('auth-wrap').querySelector('.auth-card').style.display = 'block';
   };
 
-  // orgs 컬렉션({name, updatedAt} 문서들) 전체를 페이지 로드 시 한 번 받아 배열로 들고
+  // orgs 컬렉션({name, updatedAt} 문서들)을 가입 화면을 열 때 한 번만 받아 배열로 들고
   // 있다가, 검색창 입력마다 이름 부분일치로 클라이언트에서 필터링한다(외부 라이브러리 없이
   // 순수 JS 자동완성).
+  // 예전에는 여기에 더해 KMA 사이트를 브라우저에서 실시간으로 긁었는데(수십 페이지, 약 5초),
+  // 이제 super 사이트에서 담당자가 KMA 엑셀을 올릴 때마다 orgs가 채워지므로 그 캐시만 읽는다.
+  // 목록에 없는 신규 기관은 검색창의 "+ 새 기관으로 등록"으로 바로 가입할 수 있다.
+  let orgsLoaded = false;
   async function loadAllOrgs() {
+    if (orgsLoaded) return;
+    const hintEl = document.getElementById('org-load-hint');
+    if (hintEl) { hintEl.textContent = '기관 목록 불러오는 중...'; hintEl.hidden = false; }
     try {
       const snap = await getDocs(collection(db, 'orgs'));
       allOrgs = snap.docs.map(d => ({ id: d.id, name: d.data().name || d.id }));
+      orgsLoaded = true;
     } catch (e) {
       console.warn('기관 목록 조회 실패:', e);
+    } finally {
+      if (hintEl) hintEl.hidden = true;
     }
   }
-  loadAllOrgs();
 
   // 기관명을 문서ID로 쓰되 Firestore가 금지하는 문자만 안전하게 치환 — 서버(functions의
   // sanitizeOrgId)와 같은 규칙. 직접입력으로 새 기관을 등록할 때 이걸로 orgId를 만든다.
@@ -306,20 +314,20 @@
       startMakeupRequestsListener();
       startRotateLoop();
     } catch (e) {
-      alert((final ? '교육 종료' : '교시 시작') + '에 실패했습니다: ' + e.message);
+      alert((final ? '교육 종료' : '세션 시작') + '에 실패했습니다: ' + e.message);
     } finally {
       if (!final || !isFinalPeriod) btn.disabled = false;
     }
   };
 
   window.handleNextPeriodClick = function () {
-    // 이미 만들어진 교시 사이를 오가는 것뿐이면(이전 교시로 갔다가 되돌아오는 경우)
+    // 이미 만들어진 세션 사이를 오가는 것뿐이면(이전 세션으로 갔다가 되돌아오는 경우)
     // 새로 넘어가는 게 아니라서 확인창을 띄우지 않는다.
     if (currentPeriod && currentPeriod < maxPeriod) {
       window.switchToPeriod('next');
       return;
     }
-    // 새 교시를 여는 건 되돌리기 번거롭다 — 이번 지점을 아직 안 찍은 사람이 있으면
+    // 새 세션을 여는 건 되돌리기 번거롭다 — 이번 지점을 아직 안 찍은 사람이 있으면
     // 찍을 기회를 놓친 채 넘어가지 않도록 한 번 확인받는다.
     // 조퇴자는 빼고 센다 — 이미 나간 사람 때문에 경고가 뜨면 확인창이 의미를 잃는다.
     const absent = rosterAll.filter(p => !p.earlyLeaveAt && !checkedIdsThisPeriod.has(String(p.kakaoId)));
@@ -327,7 +335,7 @@
       const shown = absent.slice(0, 5).map(p => maskName(p.name)).join(', ');
       const more = absent.length > 5 ? ` 외 ${absent.length - 5}명` : '';
       const ok = confirm(
-        `QR 미체크 ${absent.length}명이 있습니다.\n(${shown}${more})\n\n그래도 다음 교시로 넘어가시겠습니까?`
+        `QR 미체크 ${absent.length}명이 있습니다.\n(${shown}${more})\n\n그래도 다음 세션으로 넘어가시겠습니까?`
       );
       if (!ok) return;
     }
@@ -353,7 +361,7 @@
       resubscribeCheckins();
       startRotateLoop();
     } catch (e) {
-      alert('교시 이동에 실패했습니다: ' + e.message);
+      alert('세션 이동에 실패했습니다: ' + e.message);
     }
   };
 
@@ -549,12 +557,6 @@
     return res.text();
   }
 
-  // 기관명을 문서ID로 쓰되 Firestore가 금지하는 문자만 치환(원래 CF의 sanitizeOrgId와 동일 규칙).
-  function sanitizeOrgId(name) {
-    let id = String(name || '').trim().replace(/\//g, '_').replace(/\s+/g, ' ');
-    return id.replace(/^\.+/, '').replace(/\.+$/, '');
-  }
-
   // 대시보드 진입 시 백그라운드로 호출(렌더를 막지 않음). 이미 오늘 문서가 있으면 그냥
   // 넘어가서, 관리자가 여러 명이어도 그날 한 번만 긁는다. force=true면 기존 문서를 무시하고
   // 다시 긁어 덮어쓴다(패널의 "새로고침" 버튼).
@@ -617,51 +619,6 @@
     }
   };
 
-  // 가입 화면 기관 목록 — Firestore orgs 캐시에 더해 KMA 목록(오늘~+2개월)을 브라우저에서
-  // 직접 긁어 합친다. 수백 건을 orgs에 대량 저장하지는 않고(낭비), 실제 선택된 1건만
-  // 가입 시 저장한다.
-  let kmaOrgLoadStarted = false;
-
-  async function loadOrgsFromKma() {
-    if (kmaOrgLoadStarted) return;
-    kmaOrgLoadStarted = true;
-    const hintEl = document.getElementById('org-load-hint');
-    if (hintEl) { hintEl.textContent = '기관 목록 불러오는 중...'; hintEl.hidden = false; }
-    try {
-      const today = todayKST();
-      const endObj = new Date(today + 'T00:00:00+09:00');
-      endObj.setMonth(endObj.getMonth() + 2);
-      const endDt = endObj.toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
-
-      const firstHtml = await fetchKmaHtml({ start_dt: today, end_dt: endDt, pageNo: 1 });
-      const collected = parseKmaListHtml(firstHtml);
-      const maxPage = Math.min(parseMaxPage(firstHtml), 30);
-
-      // 나머지 페이지는 6개씩 병렬로(실측 23페이지 약 3.5초). 개별 실패는 무시하고 진행.
-      const pages = [];
-      for (let p = 2; p <= maxPage; p++) pages.push(p);
-      const CHUNK = 6;
-      for (let i = 0; i < pages.length; i += CHUNK) {
-        const htmls = await Promise.all(pages.slice(i, i + CHUNK).map(p =>
-          fetchKmaHtml({ start_dt: today, end_dt: endDt, pageNo: p }).catch(() => '')
-        ));
-        htmls.forEach(h => { if (h) collected.push(...parseKmaListHtml(h)); });
-      }
-
-      // Firestore 캐시와 합쳐 기관명 기준 중복 제거.
-      const byName = new Map();
-      allOrgs.forEach(o => byName.set(o.name, o));
-      collected.forEach(i => {
-        if (i.orgName && !byName.has(i.orgName)) byName.set(i.orgName, { id: sanitizeOrgId(i.orgName), name: i.orgName });
-      });
-      allOrgs = [...byName.values()];
-    } catch (e) {
-      console.warn('KMA 기관 목록 조회 실패(무시):', e);
-    } finally {
-      if (hintEl) hintEl.hidden = true;
-    }
-  }
-
   // ── 출석 서명요청 ──
   let makeupAllStudents = [];
 
@@ -683,7 +640,7 @@
   window.sendMakeupRequest = async function () {
     const kakaoId = document.getElementById('makeup-student-select').value;
     const period = parseInt(document.getElementById('makeup-period-input').value, 10);
-    if (!kakaoId || !period || period < 1) { alert('학생과 교시를 선택해주세요.'); return; }
+    if (!kakaoId || !period || period < 1) { alert('학생과 세션을 선택해주세요.'); return; }
     const student = makeupAllStudents.find(s => s.id === kakaoId);
     const sid = sessionId();
     try {
@@ -704,7 +661,7 @@
     if (!list.length) { el.innerHTML = '<div class="hist-empty">요청 내역이 없습니다.</div>'; return; }
     el.innerHTML = list.map(r => `
       <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
-        <span style="flex:1;font-size:13px;">${escapeHtml(r.name || r.kakaoId)} · ${r.period}교시 · ${MAKEUP_STATUS_LABEL[r.status] || r.status}</span>
+        <span style="flex:1;font-size:13px;">${escapeHtml(r.name || r.kakaoId)} · ${r.period}세션 · ${MAKEUP_STATUS_LABEL[r.status] || r.status}</span>
         ${r.status === 'submitted' ? `
           <button class="btn-primary" style="padding:6px 16px;font-size:12px;" onclick="reviewMakeupRequest('${r.kakaoId}', ${r.period}, 'approve')">승인</button>
           <button class="btn-primary" style="padding:6px 16px;font-size:12px;background:#B91C1C;" onclick="reviewMakeupRequest('${r.kakaoId}', ${r.period}, 'reject')">거부</button>
@@ -780,13 +737,13 @@
     new QRCode(container, { text: url, width: 660, height: 660, correctLevel: QRCode.CorrectLevel.M });
   }
 
-  // 교시 타임라인 — QR은 "교시 중"이 아니라 "교시와 교시 사이"에 찍는 것이라,
-  // 📷 스캔 지점과 교시 박스를 번갈아 세로로 그려서 그 의미를 시각화한다.
+  // 세션 타임라인 — QR은 "세션 중"이 아니라 "세션과 세션 사이"에 찍는 것이라,
+  // 📷 스캔 지점과 세션 박스를 번갈아 세로로 그려서 그 의미를 시각화한다.
   //   ( 📷 ) period 1  = 교육시작 전
-  //   [1교시]
-  //   ( 📷 ) period 2  = 1교시 종료 / 2교시 시작
-  //   [2교시] ...
-  // 현재 스캔 지점은 진하게+펄스, 지나간 지점은 흐리게, 각 지점에는 그 교시에
+  //   [1세션]
+  //   ( 📷 ) period 2  = 1세션 종료 / 2세션 시작
+  //   [2세션] ...
+  // 현재 스캔 지점은 진하게+펄스, 지나간 지점은 흐리게, 각 지점에는 그 세션에
   // 몇 명이 찍었는지 숫자 배지를 단다(기존 periodCounts 재사용).
   // 타임라인에 그릴 스캔 지점 목록 — [{p, isFinalPoint, cls, icon, count}]
   // QR 위(큰 버전)와 오른쪽 패널(compact)이 모두 이 배열을 써서 같은 순서로 그려진다.
@@ -805,8 +762,8 @@
         cls,
         icon: isFinalPoint ? '🏁' : '📷',
         count: periodCounts[p] || 0,
-        // p교시 박스는 지점 p와 지점 p+1 사이에 있다 — 그래서 다음 지점까지 넘어갔을 때
-        // (currentPeriod > p) 비로소 "그 교시가 끝나 인정됐다"가 되어 색이 찬다.
+        // p세션 박스는 지점 p와 지점 p+1 사이에 있다 — 그래서 다음 지점까지 넘어갔을 때
+        // (currentPeriod > p) 비로소 "그 세션이 끝나 인정됐다"가 되어 색이 찬다.
         classDone: currentPeriod > p,
       });
     }
@@ -818,15 +775,19 @@
     timelinePoints().forEach((pt) => {
       const badge = pt.count > 0 ? `<div class="tl-dot-badge">${pt.count}</div>` : '';
       html += `<div class="tl-dot ${pt.cls}">${pt.icon}${badge}</div>`;
-      // 마지막(종료) 지점 뒤에는 수업이 없으므로 교시 박스를 그리지 않는다.
-      // 교시 라벨은 카메라 사이 '틈'에 띄워 올려 붙인다. 가로 자리를 차지하지 않아
+      // 마지막(종료) 지점 뒤에는 수업이 없으므로 세션 박스를 그리지 않는다.
+      // 세션 라벨은 카메라 사이 '틈'에 띄워 올려 붙인다. 가로 자리를 차지하지 않아
       // 카메라를 거의 붙여 놓을 수 있고, 그만큼 라벨을 크게 키울 수 있다.
-      // '교시' 글자는 좁은 패널(compact)에서 CSS로 숨겨 숫자만 남긴다.
+      // '세션' 글자는 좁은 패널(compact)에서 CSS로 숨겨 숫자만 남긴다.
       if (!pt.isFinalPoint) {
-        // 지금 교시 라벨은 크게 그리므로, 그 라벨이 든 틈도 넓혀야 옆 라벨과 안 겹친다.
+        // 지금 세션 라벨은 크게 그리므로, 그 라벨이 든 틈도 넓혀야 옆 라벨과 안 겹친다.
         const isCur = pt.p === currentPeriod;
-        html += `<div class="tl-gap${isCur ? ' cur' : ''}"><span class="tl-class${pt.classDone ? ' done' : ''}${isCur ? ' cur' : ''}">`
-          + `${pt.p}<span class="tl-class-suffix">교시</span></span></div>`;
+        // 지금 찍는 지점의 양옆 세션 둘 다 표시한다 — 세션 박스 p는 지점 p 뒤에 오므로
+        // 왼쪽 이웃은 p=현재-1, 오른쪽 이웃은 p=현재다. 둘을 같은 색으로 칠해야
+        // "이 두 세션 사이에서 찍는다"가 읽힌다.
+        const isAdj = pt.p === currentPeriod || pt.p === currentPeriod - 1;
+        html += `<div class="tl-gap${isCur ? ' cur' : ''}"><span class="tl-class${pt.classDone ? ' done' : ''}${isAdj ? ' adj' : ''}${isCur ? ' cur' : ''}">`
+          + `${pt.p}<span class="tl-class-suffix">세션</span></span></div>`;
       }
     });
     return html;
@@ -835,7 +796,7 @@
   function renderPeriodTabs() {
     // 버튼 안에 라벨/화살표가 분리돼 있어서 라벨 span만 바꾼다(화살표는 그대로 유지).
     const nextLabelEl = document.querySelector('#btn-start-period .nav-label');
-    if (nextLabelEl) nextLabelEl.textContent = currentPeriod ? '다음 교시' : '교육시작';
+    if (nextLabelEl) nextLabelEl.textContent = currentPeriod ? '다음 세션' : '교육시작';
     updatePrevNextButtons();
     const html = timelineHtml();
     document.getElementById('period-tabs').innerHTML = html;
@@ -853,7 +814,7 @@
     const sid = sessionId();
     if (rosterUnsub) rosterUnsub();
     rosterUnsub = onSnapshot(collection(db, 'sessions', sid, 'roster'), (snap) => {
-      // "아직 안 찍은 사람 = 오늘 명단 − 이번 교시 체크인"을 계산해야 해서 인원수만이
+      // "아직 안 찍은 사람 = 오늘 명단 − 이번 세션 체크인"을 계산해야 해서 인원수만이
       // 아니라 문서 전체(kakaoId/name/phone)를 들고 있는다.
       rosterAll = snap.docs.map(d => ({ kakaoId: d.id, ...d.data() }));
       lastRosterSize = snap.size;
@@ -895,8 +856,8 @@
   }
 
   // 게이지 + "아직 안 찍은 분"(위 70%) + "체크 완료"(아래 30%).
-  // 안 찍은 사람 = 오늘 명단(roster) − 이번 교시 체크인. 첫 스캔 지점에서는 아직 아무도
-  // 명단에 없어서 비어 보이는 게 정상이고, 2교시부터 "나만 아직 안 찍었네"가 드러난다.
+  // 안 찍은 사람 = 오늘 명단(roster) − 이번 세션 체크인. 첫 스캔 지점에서는 아직 아무도
+  // 명단에 없어서 비어 보이는 게 정상이고, 2세션부터 "나만 아직 안 찍었네"가 드러난다.
   function renderAttendancePanel() {
     const fillAbsent = document.getElementById('att-fill-absent');
     const fillDone = document.getElementById('att-fill-done');
@@ -911,7 +872,7 @@
       fillDone.style.width = '0%';
       legendAbsent.textContent = '미체크 -';
       legendDone.textContent = '체크 -';
-      absentList.innerHTML = '<div class="roster-empty">교시를 시작하면 표시됩니다.</div>';
+      absentList.innerHTML = '<div class="roster-empty">세션을 시작하면 표시됩니다.</div>';
       doneList.innerHTML = '<div class="roster-empty">-</div>';
       return;
     }
@@ -940,7 +901,7 @@
     renderEarlyLeaveList(left);
   }
 
-  // 조퇴 명단 — 누가 몇 교시까지 하고 갔는지만 간단히.
+  // 조퇴 명단 — 누가 몇 세션까지 하고 갔는지만 간단히.
   function renderEarlyLeaveList(left) {
     const sec = document.getElementById('early-leave-section');
     const list = document.getElementById('early-leave-list');
@@ -950,7 +911,7 @@
     if (!left.length) return;
     label.textContent = `조퇴 ${left.length}명`;
     list.innerHTML = left.map(p => {
-      const upto = p.earlyLeavePeriod > 0 ? `${p.earlyLeavePeriod}교시까지` : '인정 교시 없음';
+      const upto = p.earlyLeavePeriod > 0 ? `${p.earlyLeavePeriod}세션까지` : '인정 세션 없음';
       return `<div class="roster-item el-item"><span>${escapeHtml(maskName(p.name))}</span>`
         + `<span class="el-upto">${upto}</span></div>`;
     }).join('');
@@ -1006,7 +967,7 @@
     });
   }
 
-  // 교시별 인원수는 이제 타임라인 📷 동그라미의 숫자 배지로 보여주므로, 별도 목록 줄
+  // 세션별 인원수는 이제 타임라인 📷 동그라미의 숫자 배지로 보여주므로, 별도 목록 줄
   // (#period-counts)은 없앴다. 호출부가 여러 곳이라 함수는 남겨두고 타임라인을 다시 그린다.
   function renderPeriodCounts() {
     renderPeriodTabs();
@@ -1023,7 +984,7 @@
   let docGenStudents = []; // 현재 열려있는 세션의 학생 목록: [{id, name}]
   let docGenSessionLabel = '';
   let docGenSessionDate = ''; // 세션 실제 날짜(YYYY-MM-DD) — 문서생성 연도 계산용
-  let docGenCheckinMap = {}; // studentId -> { period: time } — 문서생성 시 교시별 체크인 시간
+  let docGenCheckinMap = {}; // studentId -> { period: time } — 문서생성 시 세션별 체크인 시간
   let docGenLoadToken = 0; // loadSessionDetail 요청 토큰 — 응답 순서 역전 시 최신 호출만 반영
 
   window.openDocGenModal = function () {
@@ -1670,60 +1631,65 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .btn-primary:disabled{opacity:.5;cursor:not-allowed;}
 .qr-body{display:flex;flex-direction:column;align-items:center;gap:14px;}
 
-/* ── 교시 타임라인 (가로) ───────────────────────────────────────
-   QR은 "교시 중"이 아니라 "교시와 교시 사이"에 찍는 것이라, 📷 스캔 지점과
-   교시 박스를 번갈아 가로로 배치해 그 의미가 한눈에 보이게 한다.
-   period N = (N-1)교시와 N교시 사이의 스캔 지점(period 1 = 교육시작 전).
+/* ── 세션 타임라인 (가로) ───────────────────────────────────────
+   QR은 "세션 중"이 아니라 "세션과 세션 사이"에 찍는 것이라, 📷 스캔 지점과
+   세션 박스를 번갈아 가로로 배치해 그 의미가 한눈에 보이게 한다.
+   period N = (N-1)세션과 N세션 사이의 스캔 지점(period 1 = 교육시작 전).
    같은 마크업을 오른쪽 패널에서도 compact 크기로 재사용한다. */
-/* 위쪽 여백은 띄워 올린 교시 라벨과 그 위 빨간 화살표가 들어갈 자리다. */
+/* 위쪽 여백은 띄워 올린 세션 라벨과 그 위 빨간 화살표가 들어갈 자리다. */
 /* 좌우 여백은 양끝 라벨이 틈 중앙에 걸쳐 바깥으로 삐져나오는 만큼을 받아준다. */
 .tl-row{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:0;overflow-x:auto;padding:112px 34px 4px;max-width:100%;}
 .tl-row.compact{padding:64px 2px 4px;}
 .tl-row.compact .tl-dot{flex-shrink:0;}
 /* 지난/앞으로의 지점은 작게, 지금 찍는 지점만 크게 — 멀리서 시선이 현재로 모이게. */
 .tl-dot{position:relative;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;border:2px dashed var(--border);background:#fff;color:var(--muted);flex-shrink:0;transition:width .2s,height .2s;}
-/* 찍은 지점과 끝난 교시는 같은 뜻('완료')이라 같은 색으로 통일한다(교시 박스 색 기준). */
+/* 찍은 지점과 끝난 세션은 같은 뜻('완료')이라 같은 색으로 통일한다(세션 박스 색 기준). */
 .tl-dot.done{border-style:solid;border-color:var(--brand);background:var(--brand-xlight);color:var(--brand);}
 .tl-dot.active{width:84px;height:84px;font-size:38px;border-style:solid;border-color:var(--brand);background:var(--brand);color:#fff;box-shadow:0 0 0 5px rgba(108,99,255,0.18);animation:tlPulse 1.8s ease-in-out infinite;}
 @keyframes tlPulse{0%,100%{box-shadow:0 0 0 5px rgba(108,99,255,0.18);}50%{box-shadow:0 0 0 11px rgba(108,99,255,0.08);}}
 /* 지금 찍는 지점을 가리키는 빨간 화살표. 오른쪽 패널의 축소 타임라인에서는
    위아래 행과 겹쳐서 오히려 읽기 어려워지므로 큰 타임라인에서만 띄운다. */
-/* 교시 라벨이 카메라 바로 위 띠를 쓰므로, 화살표는 그보다 더 위에 둔다.
+/* 세션 라벨이 카메라 바로 위 띠를 쓰므로, 화살표는 그보다 더 위에 둔다.
    글자(▼)는 멀리서 가늘어 보여서, 테두리로 그린 두툼한 삼각형으로 바꿨다. */
 .tl-dot.now::after{content:'';position:absolute;bottom:calc(100% + 72px);left:50%;width:0;height:0;border-left:23px solid transparent;border-right:23px solid transparent;border-top:30px solid #ef4444;filter:drop-shadow(0 3px 4px rgba(0,0,0,.22));animation:tlArrowBounce 1s ease-in-out infinite;}
 .tl-row.compact .tl-dot.now::after{bottom:calc(100% + 44px);border-left-width:13px;border-right-width:13px;border-top-width:17px;}
 @keyframes tlArrowBounce{0%,100%{transform:translate(-50%,0);}50%{transform:translate(-50%,-10px);}}
 .tl-dot-badge{position:absolute;right:-5px;bottom:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--text);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #fff;}
-/* 카메라 사이의 '틈' — 연결선 역할을 하면서, 그 위에 교시 라벨을 띄워 붙인다.
+/* 카메라 사이의 '틈' — 연결선 역할을 하면서, 그 위에 세션 라벨을 띄워 붙인다.
    라벨이 가로 자리를 안 먹으니 카메라를 거의 붙여 놓을 수 있다. */
 .tl-gap{position:relative;width:20px;height:2px;background:#c7cbd6;flex-shrink:0;}
-/* 가로선에서 교시 라벨까지 올라가는 기둥 — 선이 카메라에서 끊기지 않고 교시로 이어진다. */
+/* 가로선에서 세션 라벨까지 올라가는 기둥 — 선이 카메라에서 끊기지 않고 세션으로 이어진다. */
 .tl-gap::before{content:'';position:absolute;left:50%;transform:translateX(-50%);bottom:0;width:2px;height:48px;background:#c7cbd6;}
 .tl-gap.cur::before{height:50px;width:3px;background:var(--brand);}
 .tl-gap.cur{width:58px;}
-/* 교시 글자는 뒤에서도 "지금 어느 교시를 찍는지" 읽혀야 해서 크게. 카메라 위로
+/* 세션 글자는 뒤에서도 "지금 어느 세션을 찍는지" 읽혀야 해서 크게. 카메라 위로
    확실히 띄워 올려서, 폭이 카메라를 넘어도(가운데부터 시작해도) 겹치지 않는다. */
 .tl-class{position:absolute;left:50%;bottom:48px;transform:translateX(-50%);padding:4px 7px;border-radius:10px;font-size:19px;font-weight:800;line-height:1.15;text-align:center;background:var(--subtle);color:var(--muted);border:1.5px solid var(--border);white-space:nowrap;}
-/* 지금 찍는 지점의 교시는 채우고 키워서 강조 — 멀리서도 어느 교시인지 바로 읽히게. */
-.tl-class.cur{bottom:50px;padding:7px 12px;font-size:30px;border-radius:13px;background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 4px 14px rgba(108,99,255,.35);}
-/* 끝난 교시는 색을 채워 "여기까지 진행/인정됐다"가 한눈에 보이게 한다(학생 화면과 동일). */
-.tl-class.done{background:var(--brand-xlight);color:var(--brand);border-color:var(--brand);}
+/* 세션 박스는 세 상태다 — 아직 안 한 것(기본 회색), 지나간 것(조용한 연보라),
+   지금 찍는 지점의 양옆(또렷한 연보라). 양옆이 지나간 것보다 눈에 띄어야
+   "이 두 세션 사이에서 찍는 중"이 읽히므로, .adj를 .done 뒤에 두어 이기게 한다.
+   지점 자체의 강조는 카메라(진한 보라)가 맡고 세션 박스는 전부 연하게 둔다. */
+/* 끝난 세션은 색을 채워 "여기까지 진행/인정됐다"가 한눈에 보이게 한다(학생 화면과 동일). */
+.tl-class.done{background:#f3f0fc;color:#8c86b4;border-color:#e3ddf6;}
+.tl-class.adj{background:#ddd4fa;color:#45469e;border-color:#a99df2;}
+.tl-class.cur{bottom:50px;padding:7px 12px;font-size:30px;border-radius:13px;}
 
 /* 오른쪽 패널용 축소 버전 — 큰 타임라인과 같은 마크업을 크기만 줄여 재사용한다. */
-/* 패널 안쪽이 312px뿐이라 치수를 키우면 4교시부터 가로 스크롤이 생긴다.
-   지점당 74px(32+4+34+4)로 맞춰 흔한 4교시까지는 스크롤 없이 들어가게 한다. */
+/* 패널 안쪽이 312px뿐이라 치수를 키우면 4세션부터 가로 스크롤이 생긴다.
+   지점당 74px(32+4+34+4)로 맞춰 흔한 4세션까지는 스크롤 없이 들어가게 한다. */
 .tl-row.compact .tl-dot{width:39px;height:39px;font-size:18px;border-width:1.5px;}
 .tl-row.compact .tl-dot.active{width:50px;height:50px;font-size:22px;box-shadow:0 0 0 3px rgba(90,90,196,0.18);}
 .tl-row.compact .tl-dot-badge{display:none;}
 /* 패널 축소판은 띄워 올리지 않는다(행 높이가 낮아 위 행과 겹친다). 폭도 좁아서
-   '교시'는 떼고 숫자만 남긴다 — 1교시는 1, 2교시는 2. */
+   '세션'은 떼고 숫자만 남긴다 — 1세션은 1, 2세션은 2. */
 .tl-row.compact .tl-gap{width:14px;height:2px;}
 .tl-row.compact .tl-gap.cur{width:30px;}
 .tl-row.compact .tl-class{bottom:32px;width:auto;padding:4px 7px;font-size:15px;border-radius:8px;}
 .tl-row.compact .tl-class.cur{bottom:34px;padding:5px 9px;font-size:19px;border-radius:9px;}
 .tl-row.compact .tl-gap::before{height:32px;}
 .tl-row.compact .tl-gap.cur::before{height:34px;}
-.tl-row.compact .tl-class.cur{background:var(--brand);border-color:var(--brand);color:#fff;}
+/* 색(done/adj)은 큰 타임라인 것을 그대로 쓴다 — 여기서 덮으면 두 화면의 3단계
+   구분이 서로 달라져서 "지금 이 사이"가 패널에선 안 읽힌다. 크기만 줄인다. */
 .tl-row.compact .tl-class-suffix{display:none;}
 
 /* ── ROSTER PANEL ── */
@@ -1761,7 +1727,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
   .roster-panel{width:400px;}
   #qr-canvas{min-width:440px;min-height:440px;}
   .qr-side-left{width:330px;}
-  /* 패널이 좁아진 만큼 축소 타임라인도 줄여야 6교시가 스크롤 없이 들어간다. */
+  /* 패널이 좁아진 만큼 축소 타임라인도 줄여야 6세션이 스크롤 없이 들어간다. */
   .tl-row.compact .tl-dot{width:33px;height:33px;font-size:15px;}
   .tl-row.compact .tl-class{padding:3px 6px;font-size:13px;}
 }
@@ -1944,7 +1910,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
         <div class="att-lists">
           <div class="att-col att-col-absent">
             <div class="att-list" id="att-absent-list">
-              <div class="roster-empty">교시를 시작하면 표시됩니다.</div>
+              <div class="roster-empty">세션을 시작하면 표시됩니다.</div>
             </div>
           </div>
           <div class="att-col att-col-done">
@@ -1978,7 +1944,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
         <select class="auth-input" id="makeup-student-select" disabled style="margin:0;width:auto;flex:1;min-width:200px;">
           <option value="">학생 선택</option>
         </select>
-        <input type="number" min="1" id="makeup-period-input" class="auth-input" placeholder="교시" disabled style="margin:0;width:90px;">
+        <input type="number" min="1" id="makeup-period-input" class="auth-input" placeholder="세션" disabled style="margin:0;width:90px;">
         <button class="btn-primary" disabled>요청 보내기</button>
       </div>
       <div id="makeup-requests-list">
