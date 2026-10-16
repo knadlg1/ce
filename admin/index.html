@@ -374,6 +374,8 @@
     const sub = btn.querySelector('.end-btn-sub');
     if (main) main.textContent = isFinalPeriod ? '교육 종료됨' : '교육 종료';
     if (sub) sub.textContent = isFinalPeriod ? '마지막 QR 표시 중' : '마지막 QR + 서명';
+    const warnEl = document.getElementById('qr-final-warning');
+    if (warnEl) warnEl.style.display = isFinalPeriod ? 'block' : 'none';
   }
 
   window.endSession = async function () {
@@ -557,9 +559,10 @@
     return res.text();
   }
 
-  // 대시보드 진입 시 백그라운드로 호출(렌더를 막지 않음). 이미 오늘 문서가 있으면 그냥
-  // 넘어가서, 관리자가 여러 명이어도 그날 한 번만 긁는다. force=true면 기존 문서를 무시하고
-  // 다시 긁어 덮어쓴다(패널의 "새로고침" 버튼).
+  // 시간표의 주 공급원은 2주마다 도는 서버 동기화(syncKmaSchedules)다. 이건 그 사이에
+  // KMA에 새로 올라온 교육을 위한 보조 경로 — 대시보드 진입 시 그날 문서가 없을 때만
+  // 그 기관·그날 것만 긁는다. 이미 있으면(=동기화가 이미 채워둠) 건드리지 않는다.
+  // force=true면 기존 문서를 무시하고 덮어쓴다.
   async function refreshTodaySchedule(force) {
     try {
       const today = todayKST();
@@ -597,8 +600,12 @@
 
       // 매칭이 하나도 없어도 courses:[]로 저장해 "오늘은 이미 확인함"을 남긴다(매번 재조회
       // 방지). 반대로 fetch 자체가 실패해 catch로 빠지면 문서를 만들지 않아 다음에 재시도된다.
+      // 엑셀 업로드·서버 동기화가 쓰는 형식과 같은 모양으로 저장한다(학생 화면은 courses를
+      // 읽고, events는 같은 기관·같은 날 교육이 여러 건일 때를 위해 함께 둔다).
       await setDoc(schedRef, {
         orgId: ORG_ID, orgName, date: today, courses,
+        events: [{ topic: '', place: '', code: '', hours: '', courses }],
+        source: 'kma-fallback',
         updatedAt: serverTimestamp(),
       });
     } catch (e) {
@@ -1625,6 +1632,12 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 #qr-canvas{border-radius:12px;min-width:520px;min-height:520px;display:flex;align-items:center;justify-content:center;}
 .qr-placeholder{font-size:20px;font-weight:700;color:var(--muted);}
 .qr-countdown{font-size:15px;font-weight:700;color:var(--brand);}
+/* 교육 종료 후 마지막 QR이 떠 있는 동안에만 보이는 경고 — 강의장 뒤에서도
+   읽혀야 해서 다른 큰 요소(기관명·이전/다음 버튼)와 밀리지 않는 크기로 키운다.
+   QR 아래에 붙여 QR 자체 영역(크기)은 건드리지 않는다. */
+/* 강의장 뒤에서도 읽히게 크게. 한국어는 그냥 두면 단어 중간에서 끊기므로(찍어/야)
+   keep-all로 어절 단위로만 줄바꿈하고, 문장 사이는 직접 끊어준다. */
+.qr-final-warning{display:none;align-self:stretch;background:var(--brand);color:#fff;font-size:34px;font-weight:800;line-height:1.3;text-align:center;padding:18px 24px;border-radius:14px;word-break:keep-all;}
 .current-period{font-size:20px;font-weight:800;color:var(--text);white-space:pre-line;}
 .btn-primary{background:var(--brand);color:#fff;border:none;padding:14px 32px;border-radius:var(--pill);font-size:15px;font-weight:700;cursor:pointer;transition:.15s;}
 .btn-primary:hover{background:var(--brand-dark);}
@@ -1892,6 +1905,8 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
           <div id="qr-canvas"><span class="qr-placeholder">시작 전</span></div>
         </div>
         <div class="qr-countdown" id="qr-countdown"></div>
+        <!-- 교육 종료 후 마지막 QR이 떠 있는 동안에만 보인다(updateEndSessionBtn에서 토글). -->
+        <div class="qr-final-warning" id="qr-final-warning" style="display:none;">⚠️ 마지막 QR입니다<br>꼭 찍어야 이수가 인정됩니다</div>
       </div>
       <div class="roster-panel">
         <!-- ① QR 체크: 타임라인 + (미체크 붉은색 / 체크 파란색) 게이지 + 명단 -->
@@ -1999,7 +2014,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
      눌리지 않게 한 번 더 확인받는다. -->
 <div id="end-confirm-backdrop" class="confirm-backdrop" style="display:none;">
   <div class="confirm-card">
-    <div class="confirm-text">오늘 교육을 종료하고<br>마지막 서명받기용 QR 표시</div>
+    <div class="confirm-text">오늘 교육을 종료하고<br>마지막 서명받기용 QR 표시<br><br>지금부터 뜨는 마지막 QR을 학생들이<br>반드시 찍어야 이수가 인정됩니다.</div>
     <div class="confirm-actions">
       <button class="btn-primary confirm-cancel" onclick="closeEndConfirm()">취소</button>
       <button class="btn-primary" onclick="doEndSessionConfirmed()">종료 및 서명</button>
