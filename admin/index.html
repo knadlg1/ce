@@ -9,7 +9,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
   import { getAuth, signInAnonymously, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-  import { getFirestore, collection, doc, getDoc, query, where, getDocs, onSnapshot, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+  import { getFirestore, collection, doc, getDoc, query, where, getDocs, onSnapshot, setDoc, serverTimestamp, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
   // 로그인한 계정(uid)의 admins 문서에서 orgId를 조회해 채운다(onAuthStateChanged 참고).
   // qr-admin의 ACADEMY_ID/academyName과 동일한 역할, 이름만 치환(academyId→orgId).
@@ -38,6 +38,9 @@
   let currentPeriod = null;
   let maxPeriod = 0;
   let isFinalPeriod = false;
+  // 마지막 QR 경고를 이번 종료에서 이미 띄웠는지. updateEndSessionBtn은 세션 상태가
+  // 갱신될 때마다 불리므로, 이게 없으면 10초 애니메이션이 계속 처음부터 반복된다.
+  let finalWarningShown = false;
   // 타임라인에서 🏁(교육 종료) 지점을 그리려면 "몇 세션이 마지막인지" 번호 자체가 필요하다
   // (isFinalPeriod는 "지금 보고 있는 세션이 마지막인가"만 알려줘서, 이전 세션으로 이동하면
   // 정보가 사라진다). 세션 문서의 finalPeriod를 그대로 들고 있는다.
@@ -129,6 +132,7 @@
     // 시간표는 세션 상태와 무관하게 orgId+오늘 날짜만으로 정해지므로 대시보드 진입 시
     // 스크래핑을 백그라운드로 돌려 대시보드 렌더를 막지 않는다(화면 표시는 학생 웹 전용).
     refreshTodaySchedule(false);
+    maybeSyncKma();   // 2주에 한 번, 먼저 들어온 관리자 한 명만 백그라운드로 전체 일정 수집
     await resumeIfInProgress();
   }
 
@@ -374,8 +378,17 @@
     const sub = btn.querySelector('.end-btn-sub');
     if (main) main.textContent = isFinalPeriod ? '교육 종료됨' : '교육 종료';
     if (sub) sub.textContent = isFinalPeriod ? '마지막 QR 표시 중' : '마지막 QR + 서명';
+    // 종료로 막 바뀐 순간에만 한 번 띄운다(10초 뒤 스스로 사라진다).
     const warnEl = document.getElementById('qr-final-warning');
-    if (warnEl) warnEl.style.display = isFinalPeriod ? 'block' : 'none';
+    if (warnEl) {
+      if (isFinalPeriod && !finalWarningShown) {
+        finalWarningShown = true;
+        warnEl.classList.add('show');
+      } else if (!isFinalPeriod && finalWarningShown) {
+        finalWarningShown = false;
+        warnEl.classList.remove('show');
+      }
+    }
   }
 
   window.endSession = async function () {
@@ -625,6 +638,159 @@
       btn.textContent = label;
     }
   };
+
+  // ── KMA 일정 2주 주기 동기화(관리자 브라우저에서 수행) ──────────────────
+  // 서버(Cloud Functions)로는 못 한다 — KMA가 데이터센터 IP를 막아 연결 자체가 타임아웃된다
+  // (실측: GCP에서 edu.kma.org:443 ConnectTimeout). 그래서 관리자가 로그인할 때 마지막
+  // 동기화가 14일 지났으면 먼저 들어온 한 명이 선점해 백그라운드로 수집한다. 탭을 닫아
+  // 중간에 끊겨도 선점 기록이 10분 뒤 낡은 것으로 간주돼 다음 관리자가 이어받는다.
+  const KMA_SYNC_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
+  const KMA_SYNC_STALE_MS = 10 * 60 * 1000;
+  const KMA_DETAIL_DAYS = 21;   // 목록은 2개월치, 무거운 상세 시간표는 앞으로 3주치만
+
+  // 표기가 조금 달라도(공백·괄호·가운뎃점) 같은 기관으로 보기 위한 비교용 키.
+  const kmaNameKey = (s) => String(s || '').replace(/[\s()（）\[\]·.,\-]/g, '');
+
+  function kstDateAfter(days) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+  }
+
+  async function maybeSyncKma() {
+    const ref = doc(db, 'meta', 'kmaSync');
+    try {
+      // 선점 — 여러 관리자가 동시에 로그인해도 트랜잭션으로 한 명만 통과시킨다.
+      const claimed = await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const d = snap.exists() ? snap.data() : {};
+        const now = Date.now();
+        if (now - (d.lastRunMs || 0) < KMA_SYNC_INTERVAL_MS) return false;
+        if (d.running && now - (d.runningMs || 0) < KMA_SYNC_STALE_MS) return false;
+        tx.set(ref, { running: true, runningMs: now, runningBy: ORG_ID }, { merge: true });
+        return true;
+      });
+      if (!claimed) return;
+      await runKmaSync(ref);
+    } catch (e) {
+      console.warn('KMA 동기화 건너뜀:', e);
+    }
+  }
+
+  async function runKmaSync(ref) {
+    const t0 = Date.now();
+    const rangeStart = todayKST();
+    const endObj = new Date();
+    endObj.setMonth(endObj.getMonth() + 2);
+    const rangeEnd = endObj.toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+    const detailEnd = kstDateAfter(KMA_DETAIL_DAYS);
+
+    let listCount = 0, orgCount = 0, docCount = 0, detailFailed = 0, errorMsg = null;
+    try {
+      // 1) 목록 — 2개월치. 개별 페이지 실패는 무시하고 진행한다.
+      const firstHtml = await fetchKmaHtml({ start_dt: rangeStart, end_dt: rangeEnd, pageNo: 1 });
+      const maxPage = Math.min(parseMaxPage(firstHtml), 60);
+      const items = parseKmaListHtml(firstHtml);
+      const pages = [];
+      for (let p = 2; p <= maxPage; p++) pages.push(p);
+      for (let i = 0; i < pages.length; i += 6) {
+        const htmls = await Promise.all(pages.slice(i, i + 6).map(p =>
+          fetchKmaHtml({ start_dt: rangeStart, end_dt: rangeEnd, pageNo: p }).catch(() => '')
+        ));
+        htmls.forEach(h => { if (h) items.push(...parseKmaListHtml(h)); });
+      }
+      listCount = items.length;
+
+      // 2) 상세 시간표 — 3주 안쪽만, KMA 부담을 줄이려 동시 5개로 제한.
+      const targets = items.filter(i => i.date >= rangeStart && i.date <= detailEnd);
+      const detailByIdx = new Map();
+      for (let i = 0; i < targets.length; i += 5) {
+        await Promise.all(targets.slice(i, i + 5).map(async (it) => {
+          try {
+            detailByIdx.set(it.eduidx, parseKmaDetailHtml(await fetchKmaDetailHtml(it.eduidx)));
+          } catch (e) {
+            detailFailed++;
+            detailByIdx.set(it.eduidx, []);
+          }
+        }));
+      }
+
+      // 3) 이미 가입한 기관과 어긋나지 않도록, 기존 orgs를 정규화 키로 먼저 찾아 그 문서에
+      // 흡수한다(새 문서를 중복으로 만들지 않는다).
+      const orgsSnap = await getDocs(collection(db, 'orgs'));
+      const keyToId = new Map();
+      orgsSnap.forEach(d0 => keyToId.set(d0.data().nameKey || kmaNameKey(d0.id), d0.id));
+
+      // 4) {orgId}_{날짜}로 그룹핑 — 같은 기관·같은 날 교육이 여러 건이면 events에 쌓는다.
+      const grouped = new Map();
+      const orgNameById = new Map();
+      for (const it of items) {
+        if (!it.orgName || !it.date) continue;
+        const key = kmaNameKey(it.orgName);
+        let orgId = keyToId.get(key);
+        if (!orgId) { orgId = sanitizeOrgIdClient(it.orgName); keyToId.set(key, orgId); }
+        orgNameById.set(orgId, it.orgName);
+
+        // 상세를 받지 않은 날짜(3주 밖)는 기관 등록에만 쓰고 문서는 만들지 않는다 —
+        // 빈 courses로 저장하면 엑셀로 올려둔 시간표를 빈 것으로 덮어버린다.
+        if (it.date < rangeStart || it.date > detailEnd) continue;
+        const id = `${orgId}_${it.date}`;
+        if (!grouped.has(id)) grouped.set(id, { orgId, orgName: it.orgName, date: it.date, events: [] });
+        grouped.get(id).events.push({
+          topic: it.title || '', place: it.place || '', code: '', hours: '',
+          courses: detailByIdx.get(it.eduidx) || [],
+        });
+      }
+      orgCount = orgNameById.size;
+
+      // 5) 저장 — super 엑셀 업로더와 같은 형식이라 학생 화면이 그대로 읽는다.
+      const entries = [...grouped.entries()];
+      for (let i = 0; i < entries.length; i += 300) {
+        const batch = writeBatch(db);
+        entries.slice(i, i + 300).forEach(([id, g]) => {
+          batch.set(doc(db, 'schedule', id), {
+            orgId: g.orgId, orgName: g.orgName, date: g.date,
+            events: g.events,
+            courses: g.events.flatMap(e => e.courses),
+            topic: g.events.map(e => e.topic).filter(Boolean).join(' / '),
+            place: g.events[0] ? g.events[0].place : '',
+            source: 'kma', updatedAt: serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      }
+      docCount = entries.length;
+
+      const orgEntries = [...orgNameById.entries()];
+      for (let i = 0; i < orgEntries.length; i += 300) {
+        const batch = writeBatch(db);
+        orgEntries.slice(i, i + 300).forEach(([id, name]) => {
+          batch.set(doc(db, 'orgs', id), {
+            name, nameKey: kmaNameKey(name), source: 'kma', updatedAt: serverTimestamp(),
+          }, { merge: true });
+        });
+        await batch.commit();
+      }
+    } catch (e) {
+      errorMsg = e.message || String(e);
+      console.warn('KMA 동기화 실패:', e);
+    }
+
+    // 실패하면 lastRunMs를 올리지 않는다 — 다음 관리자가 곧바로 다시 시도하게 둔다.
+    const patch = {
+      running: false, runningMs: 0, lastError: errorMsg,
+      lastTriedAt: serverTimestamp(),
+      rangeStart, rangeEnd, detailEnd,
+      listCount, orgCount, docCount, detailFailed, elapsedMs: Date.now() - t0,
+    };
+    if (!errorMsg) {
+      patch.lastRunMs = Date.now();
+      patch.lastRunAt = serverTimestamp();
+      patch.lastRunBy = ORG_ID;
+    }
+    await setDoc(ref, patch, { merge: true });
+    console.log('KMA 동기화 완료', patch);
+  }
 
   // ── 출석 서명요청 ──
   let makeupAllStudents = [];
@@ -1629,7 +1795,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .end-btn-main{font-size:30px;font-weight:800;line-height:1.2;}
 .end-btn-sub{font-size:19px;font-weight:700;opacity:.9;line-height:1.2;}
 .qr-card{background:var(--surface);border-radius:20px;padding:40px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;gap:22px;}
-#qr-canvas{border-radius:12px;min-width:520px;min-height:520px;display:flex;align-items:center;justify-content:center;}
+#qr-canvas{position:relative;border-radius:12px;min-width:520px;min-height:520px;display:flex;align-items:center;justify-content:center;}
 .qr-placeholder{font-size:20px;font-weight:700;color:var(--muted);}
 .qr-countdown{font-size:15px;font-weight:700;color:var(--brand);}
 /* 교육 종료 후 마지막 QR이 떠 있는 동안에만 보이는 경고 — 강의장 뒤에서도
@@ -1637,7 +1803,19 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
    QR 아래에 붙여 QR 자체 영역(크기)은 건드리지 않는다. */
 /* 강의장 뒤에서도 읽히게 크게. 한국어는 그냥 두면 단어 중간에서 끊기므로(찍어/야)
    keep-all로 어절 단위로만 줄바꿈하고, 문장 사이는 직접 끊어준다. */
-.qr-final-warning{display:none;align-self:stretch;background:var(--brand);color:#fff;font-size:34px;font-weight:800;line-height:1.3;text-align:center;padding:18px 24px;border-radius:14px;word-break:keep-all;}
+/* 교육 종료 직후 QR 한가운데에 겹쳐 떴다가 10초에 걸쳐 서서히 사라진다. 강의장 뒤에서도
+   읽히게 크게, 한국어가 단어 중간에서 끊기지 않게 keep-all. 사라진 뒤에는 클릭/스캔을
+   막지 않도록 pointer-events를 꺼둔다. */
+.qr-final-warning{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:86%;background:var(--brand);color:#fff;font-size:34px;font-weight:800;line-height:1.35;text-align:center;padding:22px 24px;border-radius:16px;word-break:keep-all;pointer-events:none;box-shadow:0 12px 40px rgba(0,0,0,.28);}
+.qr-final-warning.show{display:block;animation:qrFinalFade 10s ease-out forwards;}
+@keyframes qrFinalFade{
+  0%{opacity:1;}
+  60%{opacity:1;}
+  100%{opacity:0;visibility:hidden;}
+}
+@media (prefers-reduced-motion:reduce){
+  .qr-final-warning.show{animation-duration:10s;animation-timing-function:step-end;}
+}
 .current-period{font-size:20px;font-weight:800;color:var(--text);white-space:pre-line;}
 .btn-primary{background:var(--brand);color:#fff;border:none;padding:14px 32px;border-radius:var(--pill);font-size:15px;font-weight:700;cursor:pointer;transition:.15s;}
 .btn-primary:hover{background:var(--brand-dark);}
@@ -1902,11 +2080,13 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
              별도 설명 문구(구 current-period-label)는 두지 않는다. -->
         <div class="qr-body">
           <div class="tl-row" id="period-tabs"></div>
-          <div id="qr-canvas"><span class="qr-placeholder">시작 전</span></div>
+          <div id="qr-canvas"><span class="qr-placeholder">시작 전</span>
+            <!-- 교육 종료 직후 QR 한가운데에 떴다가 10초에 걸쳐 사라진다. 강의장 화면은
+                 스크롤하지 않으므로 반드시 QR 위에 겹쳐야 학생들 눈에 들어온다. -->
+            <div class="qr-final-warning" id="qr-final-warning">⚠️ 마지막 QR입니다<br>꼭 찍어야 이수가 인정됩니다</div>
+          </div>
         </div>
         <div class="qr-countdown" id="qr-countdown"></div>
-        <!-- 교육 종료 후 마지막 QR이 떠 있는 동안에만 보인다(updateEndSessionBtn에서 토글). -->
-        <div class="qr-final-warning" id="qr-final-warning" style="display:none;">⚠️ 마지막 QR입니다<br>꼭 찍어야 이수가 인정됩니다</div>
       </div>
       <div class="roster-panel">
         <!-- ① QR 체크: 타임라인 + (미체크 붉은색 / 체크 파란색) 게이지 + 명단 -->
