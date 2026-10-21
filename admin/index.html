@@ -1015,6 +1015,8 @@
 
   function renderPeriodTabs() {
     // 버튼 안에 라벨/화살표가 분리돼 있어서 라벨 span만 바꾼다(화살표는 그대로 유지).
+    // 시작 전에는 학회명·날짜·시작 버튼만 남긴다(나머지는 CSS .is-prestart가 숨김).
+    document.getElementById('page-qr').classList.toggle('is-prestart', !currentPeriod);
     const nextLabelEl = document.querySelector('#btn-start-period .nav-label');
     if (nextLabelEl) nextLabelEl.textContent = currentPeriod ? '다음 세션' : '교육시작';
     updatePrevNextButtons();
@@ -1843,6 +1845,11 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .end-btn-sub{font-size:19px;font-weight:700;opacity:.9;line-height:1.2;}
 .qr-card{position:relative;background:var(--surface);border-radius:20px;padding:40px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;gap:22px;}
 
+/* 교육 시작 전: 학회명·날짜·시작 버튼만 보이게 한다. 이전/종료 버튼, 타임라인,
+   오른쪽 출석 패널은 시작한 뒤에만 의미가 있다. */
+.is-prestart #btn-prev-period,.is-prestart #btn-end-session,.is-prestart #period-tabs,.is-prestart .roster-panel{display:none!important;}
+.is-prestart .tl-row{padding:0;}
+
 /* 요청을 기다리는 동안 — 화면이 멈춘 게 아니라 '일하는 중'으로 읽히게 카드를 흐리게
    하고 가운데에 작은 회전 표시를 띄운다. 흐려지는 것도 전환이라 갑자기 바뀌지 않는다. */
 .qr-card .qr-body,.qr-card .qr-countdown{transition:filter .22s ease,opacity .22s ease;}
@@ -2153,7 +2160,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
     <button class="btn-logout" onclick="doLogout()">로그아웃</button>
   </div>
 
-  <div class="page" id="page-qr">
+  <div class="page is-prestart" id="page-qr">
     <div class="qr-wrap">
       <div class="qr-side-left">
         <div class="qr-org-date">
