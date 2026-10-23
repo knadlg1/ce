@@ -99,6 +99,7 @@
     document.getElementById('registration-screen').hidden = true;
     document.getElementById('main-screen').hidden = false;
     document.getElementById('student-name-label').textContent = (studentName || '학생') + '님';
+    document.getElementById('topbar-date').textContent = todayKST().slice(2).replace(/-/g, '.');   // 26.10.23
     loadCheckins();
     loadRosterStatus();
     loadMakeupRequests();
@@ -909,6 +910,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 #main-screen{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh;padding-bottom:24px;background:#fff;}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);}
 .topbar-title{font-size:24px;font-weight:800;color:var(--brand);}
+.topbar-date{font-size:14px;font-weight:700;color:var(--muted);margin-top:2px;}
 .btn-logout{background:transparent;border:1.5px solid var(--border);color:var(--muted);padding:7px 14px;border-radius:var(--pill);cursor:pointer;font-size:12px;font-weight:600;}
 
 .makeup-banner{margin:14px 16px 0;background:#fef3c7;border:1px solid #fcd34d;border-radius:14px;padding:14px;cursor:pointer;}
@@ -919,10 +921,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 /* 카드 맨 위 왼쪽에 이름, 그 아래에 [시작/종료 서명 | QR 스캔] 한 줄. */
 .qr-scan-card{display:flex;flex-direction:column;gap:12px;}
 .qr-scan-row{display:flex;gap:12px;}
-/* 이름과 QR을 찍은 학회명 — 각각 연보라 알약(동그란 하이라이트). 학회명은 길면 줄임표로 자른다. */
-.student-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
-.student-pill{background:var(--brand-xlight);color:var(--text);border-radius:var(--pill);padding:7px 16px;font-size:18px;font-weight:800;line-height:1.3;}
-.student-org{min-width:0;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* 이름은 알약 없이 큰 검은 글씨, QR을 찍은 학회명만 연보라 알약(보라 글씨). 학회명은 길면 줄임표로 자른다. */
+.student-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}
+.student-name{font-size:28px;font-weight:800;color:var(--text);line-height:1.2;}
+.student-org{background:var(--brand-xlight);color:var(--brand);border-radius:var(--pill);padding:7px 16px;font-size:16px;font-weight:800;line-height:1.3;min-width:0;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .sig-preview-col{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0;}
 .sig-preview-box{border:1px solid var(--border);border-radius:10px;overflow:hidden;}
 .sig-preview-header{padding:6px 10px;font-size:12px;font-weight:700;}
@@ -1065,7 +1067,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 
 <div id="main-screen" class="screen" hidden>
   <div class="topbar">
-    <div class="topbar-title">연수교육</div>
+    <div>
+      <div class="topbar-title">연수교육</div>
+      <div class="topbar-date" id="topbar-date"></div>
+    </div>
     <button class="btn-logout" onclick="doLogout()">로그아웃</button>
   </div>
 
@@ -1075,8 +1080,8 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 
   <div class="card qr-scan-card">
     <div class="student-head">
-      <span class="student-pill" id="student-name-label"></span>
-      <span class="student-pill student-org" id="student-org-label" hidden></span>
+      <span class="student-name" id="student-name-label"></span>
+      <span class="student-org" id="student-org-label" hidden></span>
     </div>
     <div class="qr-scan-row">
     <div class="sig-preview-col">
