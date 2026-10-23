@@ -339,6 +339,11 @@
   let scanLocked = false;
 
   window.openScanner = async function () {
+    // 조퇴한 학생은 QR을 찍어도 적용되지 않는다(서버도 막는다) — 카메라를 열지 않고 알려준다.
+    if (rosterStatus && rosterStatus.earlyLeaveAt) {
+      showToast('조퇴 처리되어 QR 체크가 적용되지 않습니다. 계속 수강하려면 "조퇴 취소"를 눌러주세요.', 'error');
+      return;
+    }
     document.getElementById('scan-overlay').hidden = false;
     scanLocked = false;
     showLoading(true);   // 카메라가 켜지는 동안 검은 화면만 보이지 않게
@@ -916,7 +921,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 .qr-scan-row{display:flex;gap:12px;}
 /* 이름과 QR을 찍은 학회명 — 각각 연보라 알약(동그란 하이라이트). 학회명은 길면 줄임표로 자른다. */
 .student-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
-.student-pill{background:var(--brand-xlight);color:var(--brand-dark);border-radius:var(--pill);padding:6px 14px;font-size:15px;font-weight:800;line-height:1.3;}
+.student-pill{background:var(--brand-xlight);color:var(--text);border-radius:var(--pill);padding:7px 16px;font-size:18px;font-weight:800;line-height:1.3;}
 .student-org{min-width:0;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .sig-preview-col{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0;}
 .sig-preview-box{border:1px solid var(--border);border-radius:10px;overflow:hidden;}
@@ -928,10 +933,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 .early-leave-btn{width:100%;border:none;border-top:1px solid #fecaca;background:#fef2f2;color:#b91c1c;padding:9px 0;font-size:13px;font-weight:800;cursor:pointer;}
 .early-leave-btn:hover{background:#fee2e2;}
 /* 조퇴취소 — 조퇴하기와 같은 자리·크기를 쓰되, 되돌리는 동작임을 파란 톤으로 구분한다. */
-/* 조퇴취소는 "아직 되돌릴 수 있다"를 알리는 버튼이라, 조퇴하기(붉은색)와
-   구분되면서도 눈에 먼저 들어와야 한다 — 채운 주황으로 둔다. */
-.cancel-early-leave-btn{border-top-color:#c2410c;background:#f97316;color:#fff;}
-.cancel-early-leave-btn:hover{background:#ea580c;}
+/* 조퇴 취소는 "아직 되돌릴 수 있다"를 알리는 버튼 — 종료 서명 제목 글자색(#b91c1c)으로
+   채우고 글자는 흰색으로 둔다. */
+.cancel-early-leave-btn{border-top-color:#b91c1c;background:#b91c1c;color:#fff;}
+.cancel-early-leave-btn:hover{background:#991b1b;}
 .early-leave-card{gap:14px;}
 .early-leave-body{text-align:center;}
 .el-chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:12px;}
@@ -1085,7 +1090,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
         <!-- 세션이 끝나기 전에 나가는 학생용 — 여기서 종료 서명을 해야 그때까지가 인정된다. -->
         <button class="early-leave-btn" id="btn-early-leave" hidden onclick="openEarlyLeave()">조퇴하기</button>
         <!-- 조퇴 후 마음이 바뀐 학생용 — 조퇴하기와 같은 자리·크기, 서로 교대로만 보인다. -->
-        <button class="early-leave-btn cancel-early-leave-btn" id="btn-cancel-early-leave" hidden onclick="openCancelEarlyLeave()">조퇴취소</button>
+        <button class="early-leave-btn cancel-early-leave-btn" id="btn-cancel-early-leave" hidden onclick="openCancelEarlyLeave()">조퇴 취소</button>
       </div>
     </div>
     <button class="qr-scan-btn" onclick="openScanner()"><span class="qr-scan-icon">📷</span>QR 스캔</button>
@@ -1121,7 +1126,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
     <div class="sig-title">조퇴를 취소하고 계속 수강하시겠습니까?</div>
     <div class="early-leave-btns">
       <button class="auth-btn early-leave-cancel" onclick="closeCancelEarlyLeave()">취소</button>
-      <button class="auth-btn early-leave-go cancel-early-leave-go" id="btn-cancel-early-leave-confirm" onclick="confirmCancelEarlyLeave()">조퇴취소</button>
+      <button class="auth-btn early-leave-go cancel-early-leave-go" id="btn-cancel-early-leave-confirm" onclick="confirmCancelEarlyLeave()">조퇴 취소</button>
     </div>
   </div>
 </div>
