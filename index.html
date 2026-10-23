@@ -899,7 +899,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 /* 로그인 이후 메인 화면은 위아래까지 전부 흰 바탕 — 라벤더는 로그인/가입 화면에만 둔다. */
 #main-screen{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh;padding-bottom:24px;background:#fff;}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);}
-.topbar-title{font-size:17px;font-weight:800;color:var(--brand);}
+.topbar-title{font-size:24px;font-weight:800;color:var(--brand);}
 .btn-logout{background:transparent;border:1.5px solid var(--border);color:var(--muted);padding:7px 14px;border-radius:var(--pill);cursor:pointer;font-size:12px;font-weight:600;}
 
 .makeup-banner{margin:14px 16px 0;background:#fef3c7;border:1px solid #fcd34d;border-radius:14px;padding:14px;cursor:pointer;}
@@ -907,12 +907,13 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 
 .card{background:var(--surface);margin:14px 16px 0;border-radius:14px;padding:16px;box-shadow:var(--shadow);}
 .card-title{font-size:15px;font-weight:800;color:var(--brand);margin-bottom:12px;}
-.qr-scan-card{display:flex;gap:12px;}
+/* 카드 맨 위 왼쪽에 이름, 그 아래에 [시작/종료 서명 | QR 스캔] 한 줄. */
+.qr-scan-card{display:flex;flex-direction:column;gap:12px;}
+.qr-scan-row{display:flex;gap:12px;}
+.student-name{font-size:18px;font-weight:800;color:var(--text);}
 .sig-preview-col{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0;}
 .sig-preview-box{border:1px solid var(--border);border-radius:10px;overflow:hidden;}
 .sig-preview-header{padding:6px 10px;font-size:12px;font-weight:700;}
-.sig-preview-header-start{display:flex;justify-content:space-between;align-items:center;gap:8px;}
-.sig-preview-name{font-weight:600;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .sig-preview-header-start{background:#eef2ff;color:#4338ca;}
 .sig-preview-header-end{background:#fef2f2;color:#b91c1c;}
 .sig-preview-body{height:64px;display:flex;align-items:center;justify-content:center;background:#fafaff;}
@@ -1061,9 +1062,11 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
   </div>
 
   <div class="card qr-scan-card">
+    <div class="student-name" id="student-name-label"></div>
+    <div class="qr-scan-row">
     <div class="sig-preview-col">
       <div class="sig-preview-box">
-        <div class="sig-preview-header sig-preview-header-start"><span>시작 서명</span><span class="sig-preview-name" id="student-name-label"></span></div>
+        <div class="sig-preview-header sig-preview-header-start">시작 서명</div>
         <div class="sig-preview-body" id="sig-preview-start"><span class="empty-text">대기중</span></div>
       </div>
       <div class="sig-preview-box">
@@ -1076,6 +1079,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
       </div>
     </div>
     <button class="qr-scan-btn" onclick="openScanner()"><span class="qr-scan-icon">📷</span>QR 스캔</button>
+    </div>
   </div>
 
   <div class="card">
