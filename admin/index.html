@@ -32,7 +32,17 @@
   // 로그인 전(가입 화면의 기관 검색)에도 Firestore를 읽어야 해서 익명으로 먼저 로그인해둔다
   // (보안규칙이 request.auth != null 공통 패턴 — mobile-app/qr-admin과 동일). 실제 관리자가
   // 이메일/비밀번호로 로그인·가입하면 이 익명 세션은 그 계정으로 자연스럽게 교체된다.
-  signInAnonymously(auth).catch(e => console.warn('익명 로그인 실패:', e));
+  // 페이지를 열 때마다 무조건 부르면 새로고침 때 복원된 관리자 세션을 익명 계정이 덮어써서
+  // 다시 로그인하게 된다 — 그래서 로그인 상태가 아닐 때만 onAuthStateChanged에서 부른다.
+
+  // 로그인 유지는 로그인한 그날(KST)까지만 — 로그인할 때 날짜를 적어 두고, 다른 날 열리면 로그아웃시킨다.
+  const LOGIN_DATE_KEY = 'ce_admin_login_date';
+  function markLoginToday() {
+    try { localStorage.setItem(LOGIN_DATE_KEY, todayKST()); } catch (e) {}
+  }
+  function loginIsFromToday() {
+    try { return localStorage.getItem(LOGIN_DATE_KEY) === todayKST(); } catch (e) { return false; }
+  }
 
   // ── 상태 ──
   let currentPeriod = null;
@@ -80,6 +90,8 @@
     const errEl = document.getElementById('login-error');
     errEl.style.display = 'none';
     try {
+      // 날짜를 먼저 적는다 — 로그인 직후 리스너가 바로 도는데, 그때 날짜가 없으면 방금 로그인한 계정을 끊는다.
+      markLoginToday();
       await signInWithEmailAndPassword(auth, email, pw);
       // 이후 처리는 onAuthStateChanged 리스너가 전담한다.
     } catch (e) {
@@ -275,6 +287,7 @@
       }, { merge: true });
       ORG_ID = selectedOrg.id;
       orgName = selectedOrg.name;
+      markLoginToday();
       await enterDashboard();
     } catch (e) {
       errEl.textContent = '가입 실패: ' + (e && e.message ? e.message : e);
@@ -1737,8 +1750,11 @@
       // 익명 세션(가입화면 기관검색용)이거나 로그아웃 상태 — 실제 관리자 로그인 아님.
       document.getElementById('dashboard').style.display = 'none';
       document.getElementById('auth-wrap').style.display = 'flex';
+      if (!user) signInAnonymously(auth).catch(e => console.warn('익명 로그인 실패:', e));
       return;
     }
+    // 어제 이전에 로그인한 세션이면 끊는다(다시 부르는 리스너가 익명 세션을 세워준다).
+    if (!loginIsFromToday()) { await auth.signOut(); return; }
     try {
       const adminSnap = await getDoc(doc(db, 'admins', user.uid));
       if (!adminSnap.exists() || !adminSnap.data().orgId) {
