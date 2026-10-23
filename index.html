@@ -863,7 +863,10 @@
   --shadow: 0 2px 10px rgba(27,27,27,.06), 0 0 0 1px rgba(27,27,27,.04);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);color:var(--text);letter-spacing:-0.01em;min-height:100vh;}
+/* 화면 위·아래로 당기거나 주소창 뒤로 비치는 부분은 body 색이다 — 진한 라벤더면 흰 화면과
+   딱 잘려 보여서, 로그인(#e0d7fb→#f7f1fe)·메인 그라데이션의 중간 톤으로 맞춰 경계를 없앤다. */
+html{background:#f1ebfc;}
+body{font-family:'Pretendard',system-ui,sans-serif;background:#f1ebfc;color:var(--text);letter-spacing:-0.01em;min-height:100vh;}
 [hidden]{display:none!important;}
 
 .screen{min-height:100vh;}
@@ -893,9 +896,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .kakao-btn{width:100%;padding:15px;border-radius:var(--pill);border:none;font-size:15px;font-weight:700;cursor:pointer;background:#FEE500;color:#191600;}
 
 /* ── 메인 화면 ── */
-/* 로그인 이후 메인 화면은 흰 바탕 — 라벤더는 로그인/가입 화면에만 둔다. */
-#main-screen{display:flex;flex-direction:column;min-height:100vh;padding-bottom:24px;background:#fff;}
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);}
+/* 메인 화면은 위에서 아래로 번지는 파스텔 라벤더 — 흰 카드가 떠 보이고, 로그인 화면과도 이어진다.
+   상단바는 투명하게 두어 배경과 한 덩어리로 보이게 한다(경계선 없음). */
+#main-screen{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh;padding-bottom:24px;background:linear-gradient(180deg,#e9e1fb 0%,#f1ebfc 40%,#f7f1fe 100%);}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:transparent;}
 .topbar-title{font-size:17px;font-weight:800;color:var(--brand);}
 .topbar-name{font-size:13px;font-weight:600;color:var(--muted);margin-top:2px;}
 .btn-logout{background:transparent;border:1.5px solid var(--border);color:var(--muted);padding:7px 14px;border-radius:var(--pill);cursor:pointer;font-size:12px;font-weight:600;}
