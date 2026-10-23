@@ -98,7 +98,7 @@
     document.getElementById('login-screen').hidden = true;
     document.getElementById('registration-screen').hidden = true;
     document.getElementById('main-screen').hidden = false;
-    document.getElementById('student-name-label').textContent = studentName || '학생';
+    document.getElementById('student-name-label').textContent = (studentName || '학생') + '님';
     loadCheckins();
     loadRosterStatus();
     loadMakeupRequests();
@@ -897,6 +897,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 #main-screen{display:flex;flex-direction:column;min-height:100vh;padding-bottom:24px;background:#fff;}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);}
 .topbar-title{font-size:17px;font-weight:800;color:var(--brand);}
+.topbar-name{font-size:13px;font-weight:600;color:var(--muted);margin-top:2px;}
 .btn-logout{background:transparent;border:1.5px solid var(--border);color:var(--muted);padding:7px 14px;border-radius:var(--pill);cursor:pointer;font-size:12px;font-weight:600;}
 
 .makeup-banner{margin:14px 16px 0;background:#fef3c7;border:1px solid #fcd34d;border-radius:14px;padding:14px;cursor:pointer;}
@@ -1047,7 +1048,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 
 <div id="main-screen" class="screen" hidden>
   <div class="topbar">
-    <div class="topbar-title" id="student-name-label"></div>
+    <div>
+      <div class="topbar-title">연수교육</div>
+      <div class="topbar-name" id="student-name-label"></div>
+    </div>
     <button class="btn-logout" onclick="doLogout()">로그아웃</button>
   </div>
 
