@@ -473,8 +473,13 @@
       if (found.length && found[0].rawValue) return found[0].rawValue;
       if (n % 3 !== 0) return null;   // jsQR는 무거워서 보조로 3번에 한 번만 돌린다
     }
-    // 2) jsQR — 해상도를 낮추지 않되 긴 변 1600px까지만(너무 크면 느려진다).
-    const scale = Math.min(1, 1600 / Math.max(sw, sh));
+    // 2) jsQR — 센서 잡음이 있는 원본 크기 그대로는 오히려 못 읽는다(모의 실험: 원본 크기 0/4, 0.6~0.8배로
+    //    줄이면 4/4). 그래서 프레임마다 0.8배(긴 변 1600px까지)와 0.6배를 번갈아 시도한다.
+    //    저해상도 카메라(긴 변 800px 이하)는 줄이면 점이 뭉개지니 1배/0.8배로 한다.
+    const longSide = Math.max(sw, sh);
+    const scale = longSide <= 800
+      ? (n % 2 === 0 ? 1 : 0.8)
+      : (n % 2 === 0 ? Math.min(0.8, 1600 / longSide) : 0.6);
     const cw = Math.round(sw * scale), ch = Math.round(sh * scale);
     canvas.width = cw; canvas.height = ch;
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
