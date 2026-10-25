@@ -645,6 +645,7 @@
     html += '<div class="ck-note">세션 사이에 찍는 QR 한 번이 앞 세션의 <b>종료</b>이자 다음 세션의 <b>시작</b>입니다. 다시 찍을 필요 없어요.</div>';
     el.innerHTML = html;
     renderAttendanceScore();
+    drawTimetableOverlay();
   }
 
   // ── 시작/종료 서명(스킵 불가) + 구제요청 서명(취소 가능) — 공용 서명 모달 ──
@@ -962,6 +963,72 @@
     wrap.hidden = false;
   }
 
+  // ── 시간표 QR 타임라인 오버레이 ──
+  let ttRows = [];            // renderSchedule이 그린 줄들: { s, e, sTxt, eTxt }(시각 없으면 s=null)
+  let ttTimer = null;
+  const kstHm = (ms) => { const d = new Date(ms + 9 * 3600e3); return [d.getUTCHours(), d.getUTCMinutes()]; };
+
+  function drawTimetableOverlay() {
+    const box = document.getElementById('tl-box');
+    const ov = document.getElementById('tl-ov');
+    if (!box || !ov) return;
+    ov.innerHTML = '';
+    const rowEls = [...box.querySelectorAll('.tl-row')];
+    const timed = ttRows.map((r, i) => (r.s != null && rowEls[i] ? { ...r, el: rowEls[i] } : null)).filter(Boolean);
+    if (!timed.length) return;
+    const add = (cls, top, html) => {
+      const d = document.createElement('div');
+      d.className = cls; d.style.top = top + 'px';
+      if (html != null) d.innerHTML = html;
+      ov.appendChild(d); return d;
+    };
+    // 경계 시각 — 이어지는 줄(앞 줄 끝 = 다음 줄 시작)은 한 번만, 끊기는 곳은 끝·시작 둘 다.
+    add('tl-tm', timed[0].el.offsetTop, timed[0].sTxt);
+    timed.forEach((t, i) => {
+      const y = t.el.offsetTop + t.el.offsetHeight;
+      const nx = timed[i + 1];
+      if (!nx || nx.sTxt === t.eTxt) add('tl-tm', y, t.eTxt);
+      else { add('tl-tm', y - 9, t.eTxt); add('tl-tm', y + 9, nx.sTxt); }
+    });
+    // 시각 → 세로 위치(줄 안에서는 시간 비율로 보간, 시간표 밖이면 맨 위/아래, 줄 사이 빈 시간은 앞 줄 끝)
+    const yOf = (ms) => {
+      if (ms <= timed[0].s) return timed[0].el.offsetTop;
+      for (let i = 0; i < timed.length; i++) {
+        const t = timed[i];
+        if (ms >= t.s && ms <= t.e) return t.el.offsetTop + t.el.offsetHeight * ((ms - t.s) / Math.max(1, t.e - t.s));
+        const nx = timed[i + 1];
+        if (nx && ms > t.e && ms < nx.s) return t.el.offsetTop + t.el.offsetHeight;
+      }
+      const l = timed[timed.length - 1];
+      return l.el.offsetTop + l.el.offsetHeight;
+    };
+    const pillHtml = (ms) => { const [h, m] = kstHm(ms); return 'QR<br>' + h + '시' + m + '분'; };
+    // 실제로 찍은 QR(채워 보이는 칸이 아니라 기록된 것)을 시각 순으로
+    const scans = checkins.map(c => (c.checkedAt && typeof c.checkedAt.toDate === 'function' ? c.checkedAt.toDate() : new Date(c.checkedAt)).getTime())
+      .filter(n => !isNaN(n)).sort((a, b) => a - b);
+    const ys = scans.map(yOf);
+    for (let i = 0; i < ys.length - 1; i++) {
+      if (ys[i + 1] > ys[i]) { const b = add('tl-band', ys[i]); b.style.height = (ys[i + 1] - ys[i]) + 'px'; }
+    }
+    scans.forEach((ms, i) => { add('tl-line', ys[i] - 1.5); add('tl-pill', ys[i], pillHtml(ms)); });
+    // 지금 시각 — 오늘 시간표이고, 한 번이라도 찍었고, 아직 끝(종료 QR·조퇴)나지 않았을 때만
+    const finished = !!(rosterStatus && (rosterStatus.endScannedAt || rosterStatus.earlyLeaveAt));
+    if (scans.length && !finished && scheduleDate === todayKST()) {
+      const now = Date.now(), yN = yOf(now), yA = ys[ys.length - 1];
+      if (now > scans[scans.length - 1] && yN - yA >= 36) {   // 방금 찍어 마지막 QR과 겹치는 동안은 숨긴다
+        add('tl-line now', yN - 1.5); add('tl-pill now', yN, pillHtml(now));
+        const top = yA + 18, bot = yN - 18;
+        if (bot - top > 8) {
+          const n = Math.max(2, Math.floor((bot - top) / 12));
+          for (let i = 0; i < n; i++) {
+            const dot = add('tl-dot', top + (bot - top) * i / (n - 1) - 3.5);
+            dot.style.animationDelay = (-i * 0.16) + 's';
+          }
+        }
+      }
+    }
+  }
+
   function renderSchedule(courses, date) {
     scheduleRows = courses || [];
     scheduleDate = date || null;
@@ -971,15 +1038,27 @@
     // 휴식·식사가 데이터 맨 뒤에 몰려 저장돼 있어도 시작 시각 순으로 보여준다(같은 시각·시각 없음은 원래 순서 유지).
     const startMin = (c) => { const m = String(c.time || '').match(/(\d{1,2})\s*:\s*(\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : Infinity; };
     courses = courses.map((c, i) => ({ c, i })).sort((x, y) => (startMin(x.c) - startMin(y.c)) || (x.i - y.i)).map(x => x.c);
-    el.innerHTML = courses.map(c => `
-      <div class="schedule-row">
-        <span class="schedule-time">${escapeHtml(c.time || '')}</span>
-        <div class="schedule-info">
-          <div class="schedule-title">${escapeHtml(c.title || '')}</div>
-          <div class="schedule-sub">${escapeHtml(c.instructor || '')}${c.affiliation ? ' · ' + escapeHtml(c.affiliation) : ''}</div>
-        </div>
+    const at = (h, m) => Date.parse(`${scheduleDate}T${String(h).padStart(2, '0')}:${m}:00+09:00`);
+    ttRows = courses.map((c) => {
+      const m = String(c.time || '').match(/(\d{1,2})\s*:\s*(\d{2})\s*[~\-–]\s*(\d{1,2})\s*:\s*(\d{2})/);
+      if (!m || !scheduleDate) return { s: null };
+      const s = at(m[1], m[2]), e = at(m[3], m[4]);
+      const pad = (n) => String(n).padStart(2, '0');
+      return e > s ? { s, e, sTxt: pad(m[1]) + ':' + m[2], eTxt: pad(m[3]) + ':' + m[4] } : { s: null };
+    });
+    el.innerHTML = '<div class="tl" id="tl-box">' + courses.map((c, i) => `
+      <div class="tl-row${BREAK_RE.test(c.title || '') ? ' break' : ''}">
+        ${ttRows[i].s == null && c.time ? `<div class="schedule-rawtime">${escapeHtml(c.time)}</div>` : ''}
+        <div class="schedule-title">${escapeHtml(c.title || '')}</div>
+        <div class="schedule-sub">${escapeHtml(c.instructor || '')}${c.affiliation ? ' · ' + escapeHtml(c.affiliation) : ''}</div>
       </div>
-    `).join('');
+    `).join('') + '<div class="tl-ov" id="tl-ov"></div></div>';
+    drawTimetableOverlay();
+    // 지금 시각 선이 시간표를 따라 내려가도록 1분마다, 화면 크기가 바뀌면(줄바꿈 높이 변화) 다시 그린다.
+    if (!ttTimer) {
+      ttTimer = setInterval(drawTimetableOverlay, 60000);
+      window.addEventListener('resize', drawTimetableOverlay);
+    }
   }
 
   // ── 토스트/로딩/시간팝업 ──
@@ -1174,11 +1253,28 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 .sig-stamp{position:absolute;right:10px;top:50%;width:46px;height:46px;margin-top:-23px;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;font-weight:900;line-height:1.15;transform:rotate(-12deg);pointer-events:none;}
 .sig-stamp.done{color:#dc2626;border:2.5px solid #dc2626;background:rgba(255,255,255,.55);box-shadow:inset 0 0 0 2px rgba(220,38,38,.18);}
 
-.schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--subtle);}
-.schedule-row:last-child{border-bottom:none;}
-.schedule-time{flex-shrink:0;width:82px;font-size:12px;font-weight:700;color:var(--brand);}
-.schedule-title{font-size:13px;font-weight:700;color:var(--text);}
+/* ── 시간표 + QR 타임라인 ──
+   시간은 줄 안이 아니라 줄과 줄 사이 경계에 한 번만 적는다(왼쪽 96px = 시각 44px + QR 표시 자리 52px).
+   찍은 QR은 그 시각 위치에 보라 선과 'QR N시M분', 선과 선 사이는 연보라. 지금 시각은 연한 회색 선이 내려가며
+   마지막 QR과 사이를 점선이 잇는다 — "여기서 찍으면 보라색으로 바뀌고 채워진다"를 보여주려는 것이다. */
+.tl{position:relative;z-index:0;margin-top:8px;}
+.tl-row{position:relative;z-index:1;padding:12px 0 12px 96px;border-bottom:1px solid #ece9f4;min-height:62px;display:flex;flex-direction:column;justify-content:center;}
+.tl-row:first-child{border-top:1px solid #ece9f4;}
+.tl-row.break .schedule-title{color:#555;font-weight:600;}
+.schedule-title{font-size:14px;font-weight:700;color:var(--text);line-height:1.35;}
 .schedule-sub{font-size:12px;color:var(--muted);margin-top:2px;}
+.schedule-rawtime{font-size:11px;font-weight:700;color:var(--brand);margin-bottom:2px;}
+.tl-ov{position:absolute;inset:0;pointer-events:none;}
+.tl-band{position:absolute;left:-6px;right:-6px;background:rgba(190,170,245,.38);z-index:0;}
+.tl-tm{position:absolute;left:-2px;transform:translateY(-50%);z-index:4;font-size:12px;font-weight:800;color:var(--brand);background:#fff;padding:0 3px;line-height:1.1;border-radius:4px;}
+.tl-line{position:absolute;left:-6px;right:-6px;height:3px;background:var(--brand);z-index:2;border-radius:2px;}
+.tl-pill{position:absolute;left:46px;width:48px;transform:translateY(-50%);z-index:3;background:var(--brand);color:#fff;font-size:10.5px;font-weight:800;line-height:1.15;text-align:center;border-radius:9px;padding:3px 0;}
+.tl-line.now{background:#c4c4d0;z-index:1;}
+.tl-pill.now{background:#d6d6df;color:#5f5f6d;z-index:1;}
+/* 점은 위치·크기 그대로, 색만 위에서 아래로 차례로 진해졌다 옅어진다. */
+.tl-dot{position:absolute;z-index:2;left:70px;width:7px;height:7px;margin-left:-3.5px;border-radius:50%;background:#dcdce5;animation:tlDot 1.6s ease-in-out infinite;}
+@keyframes tlDot{0%,100%{background:#dcdce5;}50%{background:#8f8fa8;}}
+@media (prefers-reduced-motion:reduce){.tl-dot{animation:none;background:#b8b8c8;}}
 
 /* ── QR 스캔 오버레이 ── */
 .scan-overlay{position:fixed;inset:0;background:#000;z-index:200;display:flex;flex-direction:column;overflow:hidden;}
