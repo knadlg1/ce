@@ -57,9 +57,9 @@
   let finalPeriodNum = null;
   let rotateInterval = null;
   let countdownInterval = null;
-  // QR을 이 간격(초)마다 새로 낸다. 서버가 직전 토큰을 발급 후 60초까지 받아주므로(checkQrPeriod)
-  // 학생이 보는 QR의 유효시간은 이 값의 두 배 = 1분이다.
-  const QR_ROTATE_SEC = 30;
+  // QR을 이 간격(초)마다 새로 낸다. 서버가 직전 토큰을 발급 후 180초까지 받아주므로(checkQrPeriod)
+  // 학생이 보는 QR의 유효시간은 이 값의 두 배 = 3분이다.
+  const QR_ROTATE_SEC = 90;
   let countdownSec = QR_ROTATE_SEC;
   let rosterUnsub = null;
   let checkinsUnsub = null;
@@ -932,6 +932,9 @@
   function drawQr(payload, anim) {
     const container = document.getElementById('qr-canvas');
     container.innerHTML = '';
+    // 서버는 s·p·t만 쓴다 — 기관명(a)은 한글이라 주소에서 글자당 9자로 늘어 QR이 촘촘해지므로(65칸→57칸)
+    // 빼서 점을 크게 만든다. 멀리서 찍을수록 점이 클수록 읽힌다.
+    try { const o = JSON.parse(payload); delete o.a; payload = JSON.stringify(o); } catch (e) {}
     const url = STUDENT_WEB_URL + '?scan=' + encodeURIComponent(payload);
     new QRCode(container, { text: url, width: 660, height: 660, correctLevel: QRCode.CorrectLevel.M });
     hideStartButton(anim === 'enter');

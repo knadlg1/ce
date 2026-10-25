@@ -378,7 +378,10 @@
 
   // ── QR 스캔 ──
   let scanStream = null;
-  let scanRafId = null;
+  let scanTimer = null;
+  let scanTrack = null;
+  let scanDetector = null;
+  let scanDigitalZoom = 1;
   let scanLocked = false;
 
   window.openScanner = async function () {
@@ -391,10 +394,24 @@
     scanLocked = false;
     showLoading(true);   // 카메라가 켜지는 동안 검은 화면만 보이지 않게
     try {
-      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      scanStream = await openCameraStream();
+      scanTrack = scanStream.getVideoTracks()[0];
       const video = document.getElementById('qr-video');
       video.srcObject = scanStream;
       await video.play();
+      // 움직이는 손에서도 초점이 계속 맞도록(지원 기기만).
+      try {
+        const caps = scanTrack.getCapabilities ? scanTrack.getCapabilities() : {};
+        if (caps.focusMode && caps.focusMode.includes('continuous')) {
+          await scanTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+        }
+      } catch {}
+      // 브라우저 내장 QR 인식기(안드로이드 크롬 등)는 jsQR보다 작고 흐린 QR에 강하다.
+      scanDetector = null;
+      if ('BarcodeDetector' in window) {
+        try { scanDetector = new BarcodeDetector({ formats: ['qr_code'] }); } catch { scanDetector = null; }
+      }
+      setScanZoom(1);
       scanLoop();
     } catch (e) {
       showToast('카메라를 열 수 없습니다: ' + e.message, 'error');
@@ -404,34 +421,89 @@
     }
   };
 
+  // 강의장 뒤에서는 QR이 화면에서 아주 작게 보인다 — 기본 해상도(보통 640x480)로는 점이 뭉개져
+  // 못 읽으므로 고해상도를 요청하고, 그걸 못 주는 기기는 기본 설정으로 다시 연다.
+  async function openCameraStream() {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      });
+    } catch (e) {
+      if (e && e.name === 'NotAllowedError') throw e;   // 권한 거부는 다시 시도해도 같다
+      return await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    }
+  }
+
+  // 확대 — 카메라가 줌을 지원하면 센서 줌(화질 손실 없음), 아니면(아이폰 등) 화면을 키우고
+  // 키워진 가운데 부분만 읽는다.
+  window.setScanZoom = function (z) {
+    const video = document.getElementById('qr-video');
+    const caps = scanTrack && scanTrack.getCapabilities ? scanTrack.getCapabilities() : {};
+    if (caps.zoom) {
+      const v = Math.min(caps.zoom.max, Math.max(caps.zoom.min, z));
+      scanTrack.applyConstraints({ advanced: [{ zoom: v }] }).catch(() => {});
+      scanDigitalZoom = 1;
+      video.style.transform = '';
+    } else {
+      scanDigitalZoom = z;
+      video.style.transform = z > 1 ? `scale(${z})` : '';
+    }
+    document.querySelectorAll('.scan-zoom-btn').forEach(b => b.classList.toggle('on', Number(b.dataset.z) === z));
+  };
+
   window.closeScanner = function () {
     document.getElementById('scan-overlay').hidden = true;
-    if (scanRafId) { cancelAnimationFrame(scanRafId); scanRafId = null; }
+    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
     if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+    scanTrack = null;
+    scanDigitalZoom = 1;
+    document.getElementById('qr-video').style.transform = '';
   };
+
+  // 프레임 하나에서 QR 문자열을 읽는다(없으면 null).
+  async function decodeFrame(video, canvas, ctx, n) {
+    const vw = video.videoWidth, vh = video.videoHeight, z = scanDigitalZoom;
+    const sw = Math.round(vw / z), sh = Math.round(vh / z);
+    const sx = Math.round((vw - sw) / 2), sy = Math.round((vh - sh) / 2);
+    // 1) 내장 인식기 — 원본 화질 그대로 읽는다.
+    if (scanDetector) {
+      let src = video;
+      if (z > 1) { canvas.width = sw; canvas.height = sh; ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh); src = canvas; }
+      const found = await scanDetector.detect(src);
+      if (found.length && found[0].rawValue) return found[0].rawValue;
+      if (n % 3 !== 0) return null;   // jsQR는 무거워서 보조로 3번에 한 번만 돌린다
+    }
+    // 2) jsQR — 해상도를 낮추지 않되 긴 변 1600px까지만(너무 크면 느려진다).
+    const scale = Math.min(1, 1600 / Math.max(sw, sh));
+    const cw = Math.round(sw * scale), ch = Math.round(sh * scale);
+    canvas.width = cw; canvas.height = ch;
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
+    const img = ctx.getImageData(0, 0, cw, ch);
+    const code = jsQR(img.data, cw, ch, { inversionAttempts: 'dontInvert' });
+    return code && code.data ? code.data : null;
+  }
 
   function scanLoop() {
     const video = document.getElementById('qr-video');
     const canvas = document.getElementById('qr-canvas-hidden');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    function tick() {
+    let n = 0;
+    async function tick() {
       if (!scanStream) return;
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(imageData.data, imageData.width, imageData.height);
-        if (code && code.data && !scanLocked) {
-          scanLocked = true;
-          closeScanner();
-          handleScanResult(extractScanPayload(code.data));
-          return;
-        }
+      let text = null;
+      try {
+        if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth) text = await decodeFrame(video, canvas, ctx, n++);
+      } catch (e) {}   // 한 프레임 실패는 무시하고 다음 프레임에서 다시
+      if (!scanStream) return;
+      if (text && !scanLocked) {
+        scanLocked = true;
+        closeScanner();
+        handleScanResult(extractScanPayload(text));
+        return;
       }
-      scanRafId = requestAnimationFrame(tick);
+      scanTimer = setTimeout(tick, 90);
     }
-    scanRafId = requestAnimationFrame(tick);
+    tick();
   }
 
   async function handleScanResult(payload) {
@@ -1043,7 +1115,11 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 .schedule-sub{font-size:12px;color:var(--muted);margin-top:2px;}
 
 /* ── QR 스캔 오버레이 ── */
-.scan-overlay{position:fixed;inset:0;background:#000;z-index:200;display:flex;flex-direction:column;}
+.scan-overlay{position:fixed;inset:0;background:#000;z-index:200;display:flex;flex-direction:column;overflow:hidden;}
+.scan-hint{position:absolute;top:24px;left:0;right:0;text-align:center;color:#fff;font-size:14px;font-weight:700;text-shadow:0 1px 4px rgba(0,0,0,.7);padding:0 16px;}
+.scan-zoom-row{position:absolute;bottom:88px;left:0;right:0;display:flex;justify-content:center;gap:10px;}
+.scan-zoom-btn{min-width:60px;padding:11px 16px;border-radius:var(--pill);border:1.5px solid rgba(255,255,255,.55);background:rgba(0,0,0,.4);color:#fff;font-size:17px;font-weight:800;cursor:pointer;}
+.scan-zoom-btn.on{background:#fff;color:#111;border-color:#fff;}
 #qr-video{flex:1;width:100%;object-fit:cover;}
 .scan-close-btn{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.25);color:#fff;border:none;border-radius:var(--pill);padding:12px 32px;font-size:14px;font-weight:700;cursor:pointer;}
 
@@ -1191,6 +1267,12 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 <div id="scan-overlay" class="scan-overlay" hidden>
   <video id="qr-video" playsinline autoplay muted></video>
   <canvas id="qr-canvas-hidden" hidden></canvas>
+  <div class="scan-hint">멀리 있는 QR은 아래 확대 버튼을 눌러 맞춰주세요</div>
+  <div class="scan-zoom-row">
+    <button class="scan-zoom-btn on" data-z="1" onclick="setScanZoom(1)">1×</button>
+    <button class="scan-zoom-btn" data-z="2" onclick="setScanZoom(2)">2×</button>
+    <button class="scan-zoom-btn" data-z="3" onclick="setScanZoom(3)">3×</button>
+  </div>
   <button class="scan-close-btn" onclick="closeScanner()">닫기</button>
 </div>
 
