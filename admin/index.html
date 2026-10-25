@@ -64,6 +64,11 @@
   let rosterUnsub = null;
   let checkinsUnsub = null;
   let sessionUnsub = null;
+  // 관리자 컴퓨터를 두 대 쓸 때를 위한 동기화 상태
+  let qrOpBusy = false;          // 내가 누른 시작/이동 요청이 진행 중(그 에코 스냅샷은 무시)
+  let lastSeenToken = null;
+  let lastTokenChangeAt = 0;     // 어느 컴퓨터가 갱신했든 QR 토큰이 마지막으로 바뀐 시각
+  let syncReloading = false;
   let makeupRequestsUnsub = null;
   let periodCountsUnsub = null;
 
@@ -149,6 +154,8 @@
     refreshTodaySchedule(false);
     maybeSyncKma();   // 2주에 한 번, 먼저 들어온 관리자 한 명만 백그라운드로 전체 일정 수집
     await resumeIfInProgress();
+    // 아직 시작 전이어도 세션 문서를 지켜봐야, 다른 컴퓨터가 시작했을 때 이 화면도 따라간다.
+    if (!sessionUnsub) startSessionListener();
   }
 
   // ── 회원가입 — 이메일/비밀번호 + 기관 검색·선택(자기가입, qr-admin의 OTP+CF 가입과 다름) ──
@@ -312,14 +319,18 @@
     const btn = document.getElementById(final ? 'btn-end-session' : 'btn-start-period');
     btn.disabled = true;
     setQrBusy(true);
+    qrOpBusy = true;
     try {
       const res = await fetch(`${FUNC_URL}/startQrPeriod`, {
         method: 'POST',
         headers: await authHeader(),
-        body: JSON.stringify({ date: document.getElementById('session-date').value, final: !!final })
+        // expectedPeriod: 이 화면이 아는 현재 세션 번호 — 서버와 다르면 다른 컴퓨터가 먼저 바꾼 것이다.
+        body: JSON.stringify({ date: document.getElementById('session-date').value, final: !!final, expectedPeriod: currentPeriod || 0 })
       });
       if (!res.ok) throw new Error('요청 실패');
       const data = await res.json();
+      if (data.conflict) { qrOpBusy = false; syncReload(); return; }
+      if (!data.success) throw new Error(data.message || '요청 실패');
       currentPeriod = data.period;
       maxPeriod = data.maxPeriod || data.period;
       isFinalPeriod = !!final;
@@ -340,6 +351,7 @@
       alert((final ? '교육 종료' : '세션 시작') + '에 실패했습니다: ' + e.message);
     } finally {
       setQrBusy(false);
+      setTimeout(() => { qrOpBusy = false; }, 2000);   // 내 요청이 만든 스냅샷이 다 지나간 뒤에 푼다
       if (!final || !isFinalPeriod) btn.disabled = false;
     }
   };
@@ -368,13 +380,15 @@
 
   window.switchToPeriod = async function (direction) {
     setQrBusy(true);
+    qrOpBusy = true;
     try {
       const res = await fetch(`${FUNC_URL}/switchQrPeriod`, {
         method: 'POST',
         headers: await authHeader(),
-        body: JSON.stringify({ date: document.getElementById('session-date').value, direction })
+        body: JSON.stringify({ date: document.getElementById('session-date').value, direction, expectedPeriod: currentPeriod })
       });
       const data = await res.json();
+      if (data.conflict) { qrOpBusy = false; syncReload(); return; }
       if (!data.success) { alert(data.message); return; }
       currentPeriod = data.period;
       maxPeriod = data.maxPeriod || data.period;
@@ -389,6 +403,7 @@
       alert('세션 이동에 실패했습니다: ' + e.message);
     } finally {
       setQrBusy(false);
+      setTimeout(() => { qrOpBusy = false; }, 2000);
     }
   };
 
@@ -484,14 +499,36 @@
     }
   }
 
+  // 다른 컴퓨터에서 세션이 시작/이동/종료돼 이 화면과 어긋나면, 새로고침해서 서버의 최신 상태로 맞춘다
+  // (새로고침하면 resumeIfInProgress가 QR·세션 번호·명단 구독을 전부 서버 기준으로 다시 세운다).
+  // 무한 새로고침을 막으려고 30초에 3번까지만 한다.
+  function syncReload() {
+    if (syncReloading) return;
+    const k = 'ce_admin_sync_reload';
+    const now = Date.now();
+    let arr = [];
+    try { arr = JSON.parse(sessionStorage.getItem(k) || '[]').filter(t => now - t < 30000); } catch (e) {}
+    if (arr.length >= 3) return;
+    arr.push(now);
+    try { sessionStorage.setItem(k, JSON.stringify(arr)); } catch (e) {}
+    syncReloading = true;
+    setQrBusy(true);   // 화면이 잠깐 흐려지며 돌아가는 게 보인다
+    setTimeout(() => location.reload(), 600);
+  }
+
   function startSessionListener() {
     if (sessionUnsub) { sessionUnsub(); sessionUnsub = null; }
     const sid = sessionId();
     sessionUnsub = onSnapshot(doc(db, 'sessions', sid), (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
-      if (!data.currentPeriod) return;
-      currentPeriod = data.currentPeriod;
+      // 어느 컴퓨터가 갱신했든 토큰이 바뀐 시각을 적어 둔다(rotateQr가 중복 갱신을 피하는 데 쓴다).
+      if (data.periodToken !== lastSeenToken) { lastSeenToken = data.periodToken; lastTokenChangeAt = Date.now(); }
+      if (qrOpBusy) return;   // 내가 누른 요청의 응답이 오는 중 — 곧 내 화면이 알아서 맞춰진다
+      const remoteLive = !!data.currentPeriod && data.status !== 'closed';
+      const localLive = currentPeriod != null;
+      if (remoteLive !== localLive || (remoteLive && data.currentPeriod !== currentPeriod)) { syncReload(); return; }
+      if (!remoteLive) return;
       maxPeriod = data.maxPeriod || data.currentPeriod;
       isFinalPeriod = data.finalPeriod === data.currentPeriod;
       finalPeriodNum = data.finalPeriod != null ? data.finalPeriod : null;
@@ -905,6 +942,9 @@
   }
 
   async function rotateQr() {
+    // 다른 컴퓨터가 방금 갱신했으면 건너뛴다 — 두 대가 각자 갱신하면 서버가 직전 토큰 하나만 기억해서
+    // QR 유효시간이 절반으로 줄어든다. 상대가 멈추면 시간이 지나 이 컴퓨터가 이어받는다.
+    if (Date.now() - lastTokenChangeAt < QR_ROTATE_SEC * 700) return;
     try {
       const res = await fetch(`${FUNC_URL}/rotateQrToken`, {
         method: 'POST',
@@ -914,6 +954,8 @@
       if (!res.ok) throw new Error('갱신 실패');
       const data = await res.json();
       if (currentPeriod == null) return;
+      // 다른 컴퓨터가 세션을 바꿔 서버가 거절한 경우(success:false)엔 QR을 그리지 않는다 — 세션 리스너가 곧 맞춘다.
+      if (!data.success) return;
       drawQr(data.qrPayload);
       countdownSec = QR_ROTATE_SEC;
       updateCountdownLabel();
