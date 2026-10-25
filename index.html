@@ -616,23 +616,27 @@
     const cell = (c, state, label) => c
       ? `<div class="ck-cell done">${fmt(c)}</div>`
       : `<div class="ck-cell ${state}">${label}</div>`;
+    // 중간에 못 찍은 지점은 그 뒤 처음 찍은 시각으로 채워 보여준다(같은 연보라). 화면 표시만 그렇고 기록은
+    // 그대로다 — 이수 도장은 아래에서 실제로 앞뒤 지점을 둘 다 찍은 세션에만 붙인다.
+    const shown = (q) => {
+      if (byPeriod[q]) return byPeriod[q];
+      for (let r = q + 1; r <= maxChecked; r++) if (byPeriod[r]) return { checkedAt: byPeriod[r].checkedAt };
+      return null;
+    };
 
     let html = '<div class="ck-head"><span>세션</span><span>시작</span><span>종료</span></div>';
     for (let p = 1; p <= sessionCount; p++) {
       const st = byPeriod[p];        // p세션 시작 = 지점 p
       const en = byPeriod[p + 1];    // p세션 종료 = 지점 p+1
-      const done = !!st && !!en;
-      // 시작을 못 찍은 줄: 이미 지나간 세션이면 붉게(놓침), 아직 아무것도 안 찍었으면 회색.
-      const startCell = cell(st, maxChecked > 0 ? 'miss' : 'wait', maxChecked > 0 ? '미체크' : '대기');
+      const done = !!st && !!en;   // 실제로 앞뒤를 둘 다 찍은 세션만 이수 도장
+      const startCell = cell(shown(p), 'wait', '대기');
+      const enShown = shown(p + 1);
       let endState = 'wait', endLabel = '대기';
-      if (!en) {
-        if (earlyLeft && p === maxChecked) { endState = 'left'; endLabel = '조퇴'; }
-        else if (p < maxChecked) { endState = 'miss'; endLabel = '미체크'; }
-      }
+      if (!enShown && earlyLeft && p === maxChecked) { endState = 'left'; endLabel = '조퇴'; }
       html += '<div class="ck-row">'
         + `<div class="ck-session${done ? ' done' : ''}"><span>${p}세션</span>${done ? '<span class="ck-stamp">이수완료</span>' : ''}</div>`
         + startCell
-        + cell(en, endState, endLabel)
+        + cell(enShown, endState, endLabel)
         + '</div>';
     }
     if (finalEnd) html += '<div class="ck-final">교육 종료 · 마지막 QR까지 완료</div>';
@@ -1093,7 +1097,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 .ck-table{display:flex;flex-direction:column;gap:6px;}
 /* 출석현황 — [세션 | 시작 | 종료] 표. 세션 사이에 찍는 QR 한 번은 앞 세션의 '종료'이자 다음 세션의 '시작'이라
    두 칸에 같은 시각이 들어간다 — "다음 세션 시작도 이미 찍었구나"가 읽히게 하려는 것이다.
-   찍힌 칸은 QR 스캔 버튼(.qr-scan-btn)과 같은 연보라, 안 찍은 칸은 붉게, 아직 안 온 칸은 회색 점선. */
+   찍힌 칸은 QR 스캔 버튼(.qr-scan-btn)과 같은 연보라(중간에 놓친 칸도 뒤에 찍은 시각으로 채운다), 아직 안 온 칸은 회색 점선. */
 .ck-head,.ck-row{display:grid;grid-template-columns:84px 1fr 1fr;gap:6px;align-items:stretch;}
 .ck-head span{text-align:center;font-size:12px;font-weight:800;color:var(--muted);padding-bottom:2px;}
 .ck-session{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:14px;font-weight:800;color:var(--muted);background:#fafafc;border:1.5px solid var(--border);border-radius:14px;padding:8px 4px;}
@@ -1101,7 +1105,6 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 .ck-session.done{background:var(--brand-xlight);border-color:#bcaef0;color:var(--brand);}
 .ck-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:9px 6px;min-width:0;border-radius:14px;border:1.5px solid var(--border);background:#fafafc;color:var(--muted);font-size:15px;font-weight:800;white-space:nowrap;}
 .ck-cell.done{background:var(--brand-xlight);border-color:#bcaef0;color:var(--brand);}
-.ck-cell.miss{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
 .ck-cell.wait{border-style:dashed;font-weight:700;}
 .ck-cell.left{background:#b91c1c;border-color:#b91c1c;color:#fff;}
 .ck-sub{font-size:10px;font-weight:700;opacity:.8;}
