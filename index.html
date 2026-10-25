@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="light only">
 <title>연수교육 QR 인증</title>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script type="module">
@@ -157,23 +158,38 @@
     return String(document.getElementById('reg-phone').value || '').replace(/\D/g, '');
   }
 
-  // 인증 후 번호를 고치면 인증 상태를 무효화한다(다른 번호로 가입되는 것 방지).
+  // 처음 단계 — "인증번호 받기" 버튼만 보인다.
+  function showRegSendStep() {
+    document.getElementById('btn-request-otp').hidden = false;
+    document.getElementById('reg-otp-row').hidden = true;
+    document.getElementById('reg-otp-code').value = '';
+  }
+
+  // 인증번호를 받은 뒤 번호를 고치면 그 번호로 온 인증번호가 아니게 되므로(다른 번호로 가입되는 것
+  // 방지) 처음 단계로 되돌린다.
   window.onRegPhoneInput = function () {
-    if (!phoneVerified) return;
     phoneVerified = false;
-    document.getElementById('reg-verified-badge').hidden = true;
+    showRegSendStep();
   };
 
-  window.requestRegOtp = async function () {
+  // 큰 "인증번호 받기"와 작은 "재전송" 둘 다 이 함수를 쓴다(누른 버튼이 busy 표시를 받는다).
+  window.requestRegOtp = async function (btnArg) {
+    const name = document.getElementById('reg-name').value.trim();
     const phone = regPhoneDigits();
     const errEl = document.getElementById('reg-error');
     errEl.hidden = true;
+    // 인증번호가 맞는 순간 바로 가입되므로 이름이 비어 있으면 여기서 막는다.
+    if (!name) {
+      errEl.textContent = '이름을 먼저 입력해주세요.';
+      errEl.hidden = false;
+      return;
+    }
     if (!phone) {
       errEl.textContent = '휴대폰번호를 입력해주세요.';
       errEl.hidden = false;
       return;
     }
-    const btn = document.getElementById('btn-request-otp');
+    const btn = btnArg || document.getElementById('btn-request-otp');
     await withBusy(btn, '보내는 중', async () => {
       try {
         const res = await fetch(`${FUNC_URL}/requestOTP`, {
@@ -183,8 +199,11 @@
         });
         const data = await res.json();
         if (!data.success) throw new Error(data.message || '인증번호 발송 실패');
+        document.getElementById('btn-request-otp').hidden = true;
         document.getElementById('reg-otp-row').hidden = false;
-        btn.textContent = '재전송';
+        const otpInput = document.getElementById('reg-otp-code');
+        otpInput.value = '';
+        otpInput.focus();
         errEl.textContent = '인증번호가 발송되었습니다.';
         errEl.hidden = false;
       } catch (e) {
@@ -194,7 +213,7 @@
     });
   };
 
-  // 인증번호는 항상 6자리 숫자 — 마지막 자리를 치는 순간 확인 버튼을 누른 것과 같게 처리한다.
+  // 인증번호는 항상 6자리 숫자 — 마지막 자리를 치는 순간 확인하고, 맞으면 바로 가입까지 끝낸다.
   window.onRegOtpInput = function () {
     const input = document.getElementById('reg-otp-code');
     const digits = input.value.replace(/\D/g, '');
@@ -202,66 +221,61 @@
     if (digits.length === 6) verifyRegOtp();
   };
 
+  let regBusy = false;   // 6자리가 연달아 입력돼도 확인·가입이 두 번 돌지 않게 한다
+
   window.verifyRegOtp = async function () {
+    if (regBusy) return;
+    const name = document.getElementById('reg-name').value.trim();
     const phone = regPhoneDigits();
     const code = document.getElementById('reg-otp-code').value.trim();
     const errEl = document.getElementById('reg-error');
     errEl.hidden = true;
-    if (!code) {
-      errEl.textContent = '인증번호를 입력해주세요.';
+    if (code.length !== 6) return;
+    // 인증번호는 한 번 확인하면 쓰이므로, 이름이 비었을 땐 확인하기 전에 막아야 다시 입력할 수 있다.
+    if (!name) {
+      errEl.textContent = '이름을 입력한 뒤 인증번호 마지막 자리를 다시 입력해주세요.';
       errEl.hidden = false;
       return;
     }
-    const btn = document.getElementById('btn-verify-otp');
-    await withBusy(btn, '확인 중', async () => {
-      try {
-        const res = await fetch(`${FUNC_URL}/verifyOTP`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone, code }),
-        });
-        const data = await res.json();
-        if (!data.verified) throw new Error(data.message || '인증번호가 일치하지 않습니다.');
-        phoneVerified = true;
-        document.getElementById('reg-verified-badge').hidden = false;
-        document.getElementById('reg-otp-row').hidden = true;
-      } catch (e) {
-        phoneVerified = false;
-        errEl.textContent = e.message;
-        errEl.hidden = false;
-      }
-    });
+    regBusy = true;
+    showLoading(true);
+    try {
+      const res = await fetch(`${FUNC_URL}/verifyOTP`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, code }),
+      });
+      const data = await res.json();
+      if (!data.verified) throw new Error(data.message || '인증번호가 일치하지 않습니다.');
+      phoneVerified = true;
+      await submitRegistration(name, phone);   // 인증이 맞으면 가입 완료 버튼 없이 바로 가입
+    } catch (e) {
+      phoneVerified = false;
+      errEl.textContent = e.message;
+      errEl.hidden = false;
+    } finally {
+      regBusy = false;
+      showLoading(false);
+    }
   };
 
-  window.submitRegistration = async function () {
-    const name = document.getElementById('reg-name').value.trim();
-    const phone = regPhoneDigits(); // 엑셀 매칭 기준에 맞춰 숫자만 남긴 정규화 형태로 저장
+  async function submitRegistration(name, phone) {
     const errEl = document.getElementById('reg-error');
-    errEl.hidden = true;
-    if (!name || !phone) {
-      errEl.textContent = '이름과 전화번호를 입력해주세요.';
+    try {
+      await setDoc(doc(db, 'students', String(kakaoId)), {
+        kakaoId: String(kakaoId), name, phone, phoneVerified: true, registeredAt: serverTimestamp(),
+      });
+      studentName = name;
+      enterMain();
+      await consumePendingScanIfAny();
+    } catch (e) {
+      // 인증번호는 이미 쓰였고 가입 버튼도 없으니, 처음 단계로 돌려 다시 받게 한다.
+      phoneVerified = false;
+      showRegSendStep();
+      errEl.textContent = '가입 실패: ' + e.message + ' 인증번호를 다시 받아주세요.';
       errEl.hidden = false;
-      return;
     }
-    if (!phoneVerified) {
-      errEl.textContent = '휴대폰 인증을 완료해주세요.';
-      errEl.hidden = false;
-      return;
-    }
-    await withBusy(document.getElementById('btn-submit-reg'), '가입 중', async () => {
-      try {
-        await setDoc(doc(db, 'students', String(kakaoId)), {
-          kakaoId: String(kakaoId), name, phone, phoneVerified: true, registeredAt: serverTimestamp(),
-        });
-        studentName = name;
-        enterMain();
-        await consumePendingScanIfAny();
-      } catch (e) {
-        errEl.textContent = '가입 실패: ' + e.message;
-        errEl.hidden = false;
-      }
-    });
-  };
+  }
 
   async function afterKakaoLogin() {
     try {
@@ -544,7 +558,11 @@
     sigCtx.scale(ratio, ratio);
     sigCtx.lineWidth = 2.5;
     sigCtx.lineCap = 'round';
-    sigCtx.strokeStyle = '#1a1a2e';
+    sigCtx.strokeStyle = '#111111';
+    // 투명 캔버스에 검은 선만 그리면 다크 모드(강제 반전 포함)에서 배경이 어두워져 서명이 안 보인다 —
+    // 흰 바탕을 직접 칠해 어디서 보든 흰 종이에 검은 글씨가 되게 한다.
+    sigCtx.fillStyle = '#ffffff';
+    sigCtx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
     sigHasContent = false;
   }
 
@@ -571,7 +589,7 @@
   window.clearSignature = function () {
     if (!sigCtx) return;
     const canvas = document.getElementById('sig-canvas');
-    sigCtx.clearRect(0, 0, canvas.width, canvas.height);
+    sigCtx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
     sigHasContent = false;
   };
 
@@ -860,6 +878,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap');
 
 :root {
+  color-scheme: light;
   --brand: #5a5ac4;
   --brand-dark: #45469e;
   --brand-xlight: #ece5fb;
@@ -900,7 +919,12 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 .auth-btn-primary{background:var(--brand);color:#fff;}
 .auth-btn-secondary{background:#f1f5f9;color:#374151;}
 .auth-btn-secondary:disabled{opacity:.5;cursor:not-allowed;}
-.reg-verified-badge{background:#dcfce7;color:#166534;border:1px solid #86efac;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:700;margin-bottom:14px;text-align:center;}
+/* 가입 입력칸은 손가락으로 누르기 쉽게 크게. 인증번호 줄은 재전송 버튼(작게)이 입력칸 왼쪽에 붙는다. */
+.reg-input{padding:18px 18px;font-size:20px;}
+.reg-otp-line{display:flex;gap:8px;align-items:stretch;}
+.reg-otp-line .reg-input{flex:1;min-width:0;width:auto;margin:0;}
+.reg-resend-btn{flex:0 0 auto;padding:0 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--subtle);color:var(--muted);font-size:13px;font-weight:700;cursor:pointer;}
+.reg-resend-btn:disabled{opacity:.6;cursor:not-allowed;}
 .auth-btn-primary:hover{background:var(--brand-dark);}
 .auth-error{background:#FEF2F2;color:#B91C1C;border:1px solid #FECACA;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:14px;}
 .kakao-btn{width:100%;padding:15px;border-radius:var(--pill);border:none;font-size:15px;font-weight:700;cursor:pointer;background:#FEE500;color:#191600;}
@@ -1051,17 +1075,17 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
     </div>
     <div class="auth-error" id="reg-error" hidden></div>
     <label class="auth-form-label">이름</label>
-    <input class="auth-input" id="reg-name" type="text" placeholder="이름">
+    <input class="auth-input reg-input" id="reg-name" type="text" placeholder="이름">
     <label class="auth-form-label">휴대폰번호</label>
-    <input class="auth-input" id="reg-phone" type="tel" inputmode="numeric" placeholder="01012345678" oninput="onRegPhoneInput()">
-    <div class="reg-verified-badge" id="reg-verified-badge" hidden>✓ 휴대폰 인증 완료</div>
-    <button class="auth-btn auth-btn-secondary" id="btn-request-otp" onclick="requestRegOtp()">인증번호 받기</button>
+    <input class="auth-input reg-input" id="reg-phone" type="tel" inputmode="numeric" oninput="onRegPhoneInput()">
+    <button class="auth-btn auth-btn-secondary" id="btn-request-otp" onclick="requestRegOtp(this)">인증번호 받기</button>
     <div id="reg-otp-row" hidden>
-      <label class="auth-form-label" style="margin-top:14px;">인증번호</label>
-      <input class="auth-input" id="reg-otp-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="인증번호 6자리" oninput="onRegOtpInput()">
-      <button class="auth-btn auth-btn-secondary" id="btn-verify-otp" onclick="verifyRegOtp()">확인</button>
+      <label class="auth-form-label">인증번호</label>
+      <div class="reg-otp-line">
+        <button class="reg-resend-btn" id="btn-resend-otp" onclick="requestRegOtp(this)">재전송</button>
+        <input class="auth-input reg-input" id="reg-otp-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="인증번호 6자리" oninput="onRegOtpInput()">
+      </div>
     </div>
-    <button class="auth-btn auth-btn-primary" id="btn-submit-reg" style="margin-top:14px;" onclick="submitRegistration()">가입 완료</button>
   </div>
 </div>
 
