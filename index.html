@@ -538,7 +538,8 @@
         showToast(scannedPeriod ? `✅ ${scannedPeriod}세션 출석 체크 완료!` : '출석 체크 완료!', 'success');
         await loadCheckins();
         // 배열 순서가 아니라 방금 찍은 세션으로 집어야 정확하다(구제승인 등으로 순서가 어긋날 수 있다).
-        popupForPeriod(scannedPeriod, 'success');
+        // 오늘 처음 찍었으면 시작 서명, 종료 QR이면 종료 서명이 필수다(서버가 알려준다).
+        popupForPeriod(scannedPeriod, 'success', !!(data.isFirstScanToday || data.isFinalPeriod));
         // 서로 무관한 조회라 순차로 돌릴 이유가 없다(실측 258ms -> 65ms).
         await Promise.all([loadRosterStatus(), loadSchedule()]);
       } else if (data.duplicate) {
@@ -559,14 +560,14 @@
   }
 
   // 방금 찍은 세션의 체크인 시각을 찾아 결과 팝업을 띄운다(성공/중복 공통).
-  function popupForPeriod(period, kind) {
+  function popupForPeriod(period, kind, needSign) {
     const c = checkins.find(x => x.period === period);
     if (!c || !c.checkedAt) return;
     const d = c.checkedAt.toDate ? c.checkedAt.toDate() : new Date(c.checkedAt);
     if (isNaN(d.getTime())) return;
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
-    showTimePopup(`${hh}:${mm}`, period, kind);
+    showTimePopup(`${hh}:${mm}`, period, kind, needSign);
   }
 
   // ── 체크인 목록 ──
@@ -998,20 +999,24 @@
     if (!p) return '출석';
     return p === 1 ? '교육 시작 전' : `${p - 1}세션 완료`;
   }
-  function showTimePopup(timeText, period, kind) {
+  function showTimePopup(timeText, period, kind, needSign) {
     const el = document.getElementById('time-popup');
     document.getElementById('time-popup-where').textContent = scanPointLabel(period);
     document.getElementById('time-popup-text').textContent = timeText;
     document.getElementById('time-popup-note').textContent =
       kind === 'duplicate' ? '이미 처리 된 QR입니다' : '출석 인정되었습니다';
     el.classList.toggle('dup', kind === 'duplicate');
+    // 서명이 필요한 스캔이면 '서명하기 (필수)'를 보여주고, 읽을 시간이 있도록 조금 더 오래 띄운다.
+    document.getElementById('time-popup-sign').hidden = !needSign;
+    const showMs = needSign ? 3600 : 2200;
+    el.style.animationDuration = showMs + 'ms';
     el.hidden = false;
     el.classList.remove('time-popup-show');
     if (timePopupTimer) clearTimeout(timePopupTimer);
     // 연속 스캔 시 애니메이션을 처음부터 다시 재생시키기 위한 강제 리플로우
     void el.offsetWidth;
     el.classList.add('time-popup-show');
-    timePopupTimer = setTimeout(() => { el.hidden = true; }, 2200);
+    timePopupTimer = setTimeout(() => { el.hidden = true; }, showMs);
   }
 
   function showLoading(v) {
@@ -1212,6 +1217,8 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 .time-popup-where{font-size:17px;font-weight:700;opacity:.9;margin-bottom:2px;}
 .time-popup-text{font-size:56px;font-weight:800;letter-spacing:-0.02em;line-height:1.1;}
 .time-popup-note{font-size:15px;font-weight:700;opacity:.9;margin-top:4px;}
+/* 처음 찍을 때(시작 서명)와 마지막 QR(종료 서명)은 서명이 필수 — 팝업에서 바로 알려 서명창이 뜨는 이유가 읽히게 한다. */
+.time-popup-sign{display:inline-block;margin-top:12px;background:#fff;color:#b91c1c;border-radius:var(--pill);padding:9px 18px;font-size:18px;font-weight:900;white-space:nowrap;}
 /* 2.2s는 showTimePopup()의 숨김 타이머와 맞춘 값이다(둘이 어긋나면 빈 상자가 남는다). */
 .time-popup.time-popup-show{animation:timePopupAnimate 2.2s ease-in-out forwards;}
 @keyframes timePopupAnimate{0%{opacity:0;transform:translate(-50%,-50%) scale(0.7);}12%{opacity:1;transform:translate(-50%,-50%) scale(1.06);}20%{transform:translate(-50%,-50%) scale(1);}85%{opacity:1;transform:translate(-50%,-50%) scale(1);}100%{opacity:0;transform:translate(-50%,-50%) scale(0.9);}}
@@ -1372,6 +1379,7 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
   <div class="time-popup-where" id="time-popup-where">1세션 전</div>
   <div class="time-popup-text" id="time-popup-text">09:30</div>
   <div class="time-popup-note" id="time-popup-note">출석 인정</div>
+  <div class="time-popup-sign" id="time-popup-sign" hidden>✍️ 서명하기 (필수)</div>
 </div>
 
 </body>
