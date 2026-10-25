@@ -158,8 +158,28 @@
     return String(document.getElementById('reg-phone').value || '').replace(/\D/g, '');
   }
 
+  // 안드로이드 크롬(WebOTP): 문자 마지막 줄이 "@도메인 #코드" 형식이면 브라우저가 문자를 읽어 코드를
+  // 넘겨준다(처음엔 "허용" 안내가 한 번 뜬다). 다른 브라우저는 이 API가 없어 키보드 제안(one-time-code)에 맡긴다.
+  let webOtpAbort = null;
+  function stopWebOtp() {
+    if (webOtpAbort) { webOtpAbort.abort(); webOtpAbort = null; }
+  }
+  function startWebOtp() {
+    stopWebOtp();
+    if (!('OTPCredential' in window)) return;
+    webOtpAbort = new AbortController();
+    navigator.credentials.get({ otp: { transport: ['sms'] }, signal: webOtpAbort.signal })
+      .then((cred) => {
+        if (!cred || !cred.code) return;
+        document.getElementById('reg-otp-code').value = String(cred.code).replace(/\D/g, '');
+        onRegOtpInput();   // 6자리가 차면 바로 확인·가입
+      })
+      .catch(() => {});   // 거부/취소/미지원이면 직접 입력하면 된다
+  }
+
   // 처음 단계 — "인증번호 받기" 버튼만 보인다.
   function showRegSendStep() {
+    stopWebOtp();
     document.getElementById('btn-request-otp').hidden = false;
     document.getElementById('reg-otp-row').hidden = true;
     document.getElementById('reg-otp-code').value = '';
@@ -190,6 +210,14 @@
       return;
     }
     const btn = btnArg || document.getElementById('btn-request-otp');
+    // 누른 순간(사용자 동작 안)에 인증번호 칸을 열고 커서를 둔다 — 발송이 끝난 뒤에 옮기면 폰에서
+    // 키보드가 안 뜰 수 있다. 발송에 실패하면 아래에서 다시 닫는다.
+    const otpRow = document.getElementById('reg-otp-row');
+    const otpInput = document.getElementById('reg-otp-code');
+    const wasOpen = !otpRow.hidden;
+    otpRow.hidden = false;
+    otpInput.value = '';
+    otpInput.focus();
     await withBusy(btn, '보내는 중', async () => {
       try {
         const res = await fetch(`${FUNC_URL}/requestOTP`, {
@@ -200,13 +228,12 @@
         const data = await res.json();
         if (!data.success) throw new Error(data.message || '인증번호 발송 실패');
         document.getElementById('btn-request-otp').hidden = true;
-        document.getElementById('reg-otp-row').hidden = false;
-        const otpInput = document.getElementById('reg-otp-code');
-        otpInput.value = '';
         otpInput.focus();
+        startWebOtp();
         errEl.textContent = '인증번호가 발송되었습니다.';
         errEl.hidden = false;
       } catch (e) {
+        if (!wasOpen) otpRow.hidden = true;
         errEl.textContent = e.message;
         errEl.hidden = false;
       }
@@ -238,6 +265,7 @@
       return;
     }
     regBusy = true;
+    stopWebOtp();
     showLoading(true);
     try {
       const res = await fetch(`${FUNC_URL}/verifyOTP`, {
