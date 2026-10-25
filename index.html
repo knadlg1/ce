@@ -926,6 +926,9 @@
   function renderSchedule(courses) {
     const el = document.getElementById('schedule-card-body');
     if (!courses || !courses.length) { el.innerHTML = '<div class="empty-text">참고용 시간표가 없습니다.</div>'; return; }
+    // 휴식·식사가 데이터 맨 뒤에 몰려 저장돼 있어도 시작 시각 순으로 보여준다(같은 시각·시각 없음은 원래 순서 유지).
+    const startMin = (c) => { const m = String(c.time || '').match(/(\d{1,2})\s*:\s*(\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : Infinity; };
+    courses = courses.map((c, i) => ({ c, i })).sort((x, y) => (startMin(x.c) - startMin(y.c)) || (x.i - y.i)).map(x => x.c);
     el.innerHTML = courses.map(c => `
       <div class="schedule-row">
         <span class="schedule-time">${escapeHtml(c.time || '')}</span>
