@@ -778,13 +778,12 @@
     if (!startEl || !endEl) return;
     const startSig = rosterStatus && rosterStatus.startSignature;
     const endSig = rosterStatus && rosterStatus.endSignature;
-    // 서명이 끝나면 서명 위에 '서명완료' 도장, 아직이면 점선 '미서명' 도장 — 시작 서명은 했는데
-    // 종료 서명이 남았다는 게(붉은 점선) 바로 보이게 한다.
-    const sigBody = (sig, alert) => sig
+    // 서명이 끝나면 서명 위에 '서명완료' 도장 — 도장이 없으면 아직 안 한 것이다.
+    const sigBody = (sig) => sig
       ? `<img src="data:image/png;base64,${sig}"><span class="sig-stamp done">서명<br>완료</span>`
-      : `<span class="sig-stamp todo${alert ? ' alert' : ''}">미서명</span>`;
-    startEl.innerHTML = sigBody(startSig, false);
-    endEl.innerHTML = sigBody(endSig, !!startSig);
+      : '';
+    startEl.innerHTML = sigBody(startSig);
+    endEl.innerHTML = sigBody(endSig);
 
     // 조퇴 버튼은 '출석 중이고 아직 종료 서명 전'일 때만 — 이미 서명했으면 나갈 일이 없고,
     // 한 번도 안 찍었으면 인정받을 세션 자체가 없다.
@@ -1112,13 +1111,10 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 /* 이수완료는 붉은 도장처럼 — 살짝 기울여 찍은 느낌을 준다. */
 .ck-stamp{color:#dc2626;border:2px solid #dc2626;border-radius:5px;padding:1px 4px;font-size:10px;font-weight:900;letter-spacing:.5px;line-height:1.25;white-space:nowrap;transform:rotate(-7deg);}
 
-/* 서명 박스 — 서명이 끝나면 서명 위에 둥근 '서명완료' 도장, 아직이면 점선 도장('미서명')으로 상태가 보이게 한다. */
+/* 서명 박스 — 서명이 끝나면 서명 위에 둥근 '서명완료' 도장이 찍힌다(도장이 없으면 아직 안 한 것). */
 .sig-preview-body{position:relative;}
 .sig-stamp{position:absolute;right:10px;top:50%;width:46px;height:46px;margin-top:-23px;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;font-weight:900;line-height:1.15;transform:rotate(-12deg);pointer-events:none;}
 .sig-stamp.done{color:#dc2626;border:2.5px solid #dc2626;background:rgba(255,255,255,.55);box-shadow:inset 0 0 0 2px rgba(220,38,38,.18);}
-.sig-stamp.todo{color:#9ca3af;border:2px dashed #cbd5e1;}
-/* 시작 서명은 했는데 종료 서명을 아직 안 한 상태 — 붉은 점선으로 "아직 남았다"를 알린다. */
-.sig-stamp.todo.alert{color:#dc2626;border-color:#f87171;}
 
 .schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--subtle);}
 .schedule-row:last-child{border-bottom:none;}
