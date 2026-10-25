@@ -2033,11 +2033,15 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
 .att-legend-done{color:var(--brand);}
 
 /* 명단 두 개를 좌(미체크)/우(체크)로 나란히 — 각자 박스 안에서만 스크롤된다. */
-.att-lists{display:flex;gap:10px;flex:1;min-height:0;}
-.att-col{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;}
+/* 명단 두 칸은 패널 높이 = QR 카드 높이만큼 채운다. 칸을 absolute로 띄워 두면 명단 인원이 많아도
+   패널(과 QR 카드와 같은 줄)이 늘어나지 않고, 남는 높이를 그대로 받아 안에서만 스크롤된다. */
+.att-lists{position:relative;flex:1;min-height:200px;}
+.att-col{position:absolute;top:0;bottom:0;display:flex;flex-direction:column;width:calc(50% - 5px);min-width:0;min-height:0;}
+.att-col-absent{left:0;}
+.att-col-done{right:0;}
 /* max-height가 없으면 인원수만큼 끝없이 늘어난다 — 2,500명 강의에서 패널이
    78,000px까지 커지고 페이지 전체가 밀렸다. 칸을 고정하고 안에서 스크롤한다. */
-.att-list{overflow-y:auto;display:flex;flex-direction:column;gap:5px;flex:1;min-height:70px;max-height:430px;padding:6px;border-radius:10px;background:var(--subtle);border:1px solid var(--border);overscroll-behavior:contain;}
+.att-list{overflow-y:auto;display:flex;flex-direction:column;gap:5px;flex:1;min-height:70px;padding:6px;border-radius:10px;background:var(--subtle);border:1px solid var(--border);overscroll-behavior:contain;}
 .att-col-absent .att-list{background:#fef2f2;border-color:#fecaca;}
 .att-col-absent .roster-item{background:#fff;border:1px solid #fecaca;}
 .att-col-done .roster-item{background:#fff;border:1px solid #ddd9ff;}
