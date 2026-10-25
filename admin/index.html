@@ -57,9 +57,9 @@
   let finalPeriodNum = null;
   let rotateInterval = null;
   let countdownInterval = null;
-  // QR을 이 간격(초)마다 새로 낸다. 서버가 직전 토큰을 발급 후 20초까지 받아주므로(checkQrPeriod)
-  // 학생이 보는 QR의 유효시간은 이 값의 두 배 = 20초다.
-  const QR_ROTATE_SEC = 10;
+  // QR을 이 간격(초)마다 새로 낸다. 서버가 직전 토큰을 발급 후 60초까지 받아주므로(checkQrPeriod)
+  // 학생이 보는 QR의 유효시간은 이 값의 두 배 = 1분이다.
+  const QR_ROTATE_SEC = 30;
   let countdownSec = QR_ROTATE_SEC;
   let rosterUnsub = null;
   let checkinsUnsub = null;
