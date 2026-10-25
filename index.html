@@ -597,52 +597,47 @@
     }
   }
 
-  // 세션 하나를 한 줄로 — [📷 찍은시각] - N세션.
-  // 스캔 지점 p는 p세션 바로 앞이라 그 세션 행의 시각으로 쓴다. 앞뒤 시각을 양쪽에
-  // 다 적던 이전 방식은 같은 시각이 두 행에 중복돼 8·9세션까지 가면 읽기 힘들었다.
-  // p세션의 이수 여부는 그 뒤 지점(p+1)을 찍었는지로 판단해 '이수완료' 도장으로 보여준다.
-  function fmtCheckedAtShort(ts) {
-    try {
-      const d = ts && typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts);
-      if (isNaN(d.getTime())) return '-';
-      const yy = String(d.getFullYear()).slice(2);
-      const hh = String(d.getHours()).padStart(2, '0');
-      const mm = String(d.getMinutes()).padStart(2, '0');
-      return `${yy}.${d.getMonth() + 1}.${d.getDate()} ${hh}:${mm}`;
-    } catch { return '-'; }
-  }
-
   function renderCheckins() {
     const el = document.getElementById('checkin-list');
+    const byPeriod = {};
+    checkins.forEach(c => { byPeriod[c.period] = c; });
     const maxChecked = checkins.length ? Math.max(...checkins.map(c => c.period)) : 0;
-    // 아직 하나도 안 찍었어도 1세션 행은 보여줘야 "무엇을 찍어야 하는지"가 전달된다.
-    const rowCount = Math.max(1, maxChecked);
-
-    // 마지막 줄의 오른쪽이 세션이 아닌 경우 — 그날 일정이 거기서 끝났다는 표시다.
-    // 4세션 뒤에 종료 QR을 찍으면 지점 5가 생기는데 5세션 수업은 없으므로,
-    // '5세션(회색)' 대신 끝났음을 그대로 보여줘야 헷갈리지 않는다.
-    // 정상 종료면 '교육종료', 조퇴로 끝냈으면 '조퇴완료'(표시 방식은 동일).
     const earlyLeft = !!(rosterStatus && rosterStatus.earlyLeaveAt);
-    const endScanned = earlyLeft || !!(rosterStatus && rosterStatus.endScannedAt);
+    const finalEnd = !earlyLeft && !!(rosterStatus && rosterStatus.endScannedAt);
+    // 스캔 지점 p는 p세션의 '시작'이자 (p-1)세션의 '종료'다. 마지막 종료 QR(교육종료)은 새 세션이
+    // 아니라 마지막 세션의 종료이므로 세션 줄로 따로 만들지 않는다. 아직 하나도 안 찍었어도 1세션 줄은
+    // 보여줘야 "무엇을 찍어야 하는지"가 전달된다.
+    const sessionCount = finalEnd && maxChecked > 1 ? maxChecked - 1 : Math.max(1, maxChecked);
+    const fmt = (c) => {
+      const t = c.checkedAt && typeof c.checkedAt.toDate === 'function' ? c.checkedAt.toDate() : new Date(c.checkedAt);
+      const hhmm = isNaN(t.getTime()) ? '-' : String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+      return hhmm + (c.makeupApproved ? '<span class="ck-sub">서명출석</span>' : '');
+    };
+    const cell = (c, state, label) => c
+      ? `<div class="ck-cell done">${fmt(c)}</div>`
+      : `<div class="ck-cell ${state}">${label}</div>`;
 
-    let html = '';
-    for (let p = 1; p <= rowCount; p++) {
-      const c = checkins.find(x => x.period === p);       // p세션 바로 앞에서 찍은 것
-      const done = !!c && checkins.some(x => x.period === p + 1); // 뒤까지 찍어야 이수
-      const isEndRow = endScanned && p === rowCount;
-      const time = c
-        ? `${fmtCheckedAtShort(c.checkedAt)}${c.makeupApproved ? ' (서명출석)' : ''}`
-        : '미체크';
+    let html = '<div class="ck-head"><span>세션</span><span>시작</span><span>종료</span></div>';
+    for (let p = 1; p <= sessionCount; p++) {
+      const st = byPeriod[p];        // p세션 시작 = 지점 p
+      const en = byPeriod[p + 1];    // p세션 종료 = 지점 p+1
+      const done = !!st && !!en;
+      // 시작을 못 찍은 줄: 이미 지나간 세션이면 붉게(놓침), 아직 아무것도 안 찍었으면 회색.
+      const startCell = cell(st, maxChecked > 0 ? 'miss' : 'wait', maxChecked > 0 ? '미체크' : '대기');
+      let endState = 'wait', endLabel = '대기';
+      if (!en) {
+        if (earlyLeft && p === maxChecked) { endState = 'left'; endLabel = '조퇴'; }
+        else if (p < maxChecked) { endState = 'miss'; endLabel = '미체크'; }
+      }
       html += '<div class="ck-row">'
-        + `<div class="ck-cell${c ? ' done' : ''}"><span class="ck-cam">📷</span><span class="ck-time">${time}</span></div>`
-        + '<div class="ck-dash">-</div>'
-        + (isEndRow
-          ? `<div class="ck-period ck-end"><span>${earlyLeft ? '조퇴완료' : '교육종료'}</span></div>`
-          : `<div class="ck-period${done ? ' done' : ''}"><span>${p}세션</span>`
-            + (done ? '<span class="ck-stamp">이수완료</span>' : '')
-            + '</div>')
+        + `<div class="ck-session${done ? ' done' : ''}"><span>${p}세션</span>${done ? '<span class="ck-stamp">이수완료</span>' : ''}</div>`
+        + startCell
+        + cell(en, endState, endLabel)
         + '</div>';
     }
+    if (finalEnd) html += '<div class="ck-final">교육 종료 · 마지막 QR까지 완료</div>';
+    else if (earlyLeft) html += '<div class="ck-final">조퇴 완료</div>';
+    html += '<div class="ck-note">세션 사이에 찍는 QR 한 번이 앞 세션의 <b>종료</b>이자 다음 세션의 <b>시작</b>입니다. 다시 찍을 필요 없어요.</div>';
     el.innerHTML = html;
   }
 
@@ -783,8 +778,13 @@
     if (!startEl || !endEl) return;
     const startSig = rosterStatus && rosterStatus.startSignature;
     const endSig = rosterStatus && rosterStatus.endSignature;
-    startEl.innerHTML = startSig ? `<img src="data:image/png;base64,${startSig}">` : '<span class="empty-text">대기중</span>';
-    endEl.innerHTML = endSig ? `<img src="data:image/png;base64,${endSig}">` : '<span class="empty-text">대기중</span>';
+    // 서명이 끝나면 서명 위에 '서명완료' 도장, 아직이면 점선 '미서명' 도장 — 시작 서명은 했는데
+    // 종료 서명이 남았다는 게(붉은 점선) 바로 보이게 한다.
+    const sigBody = (sig, alert) => sig
+      ? `<img src="data:image/png;base64,${sig}"><span class="sig-stamp done">서명<br>완료</span>`
+      : `<span class="sig-stamp todo${alert ? ' alert' : ''}">미서명</span>`;
+    startEl.innerHTML = sigBody(startSig, false);
+    endEl.innerHTML = sigBody(endSig, !!startSig);
 
     // 조퇴 버튼은 '출석 중이고 아직 종료 서명 전'일 때만 — 이미 서명했으면 나갈 일이 없고,
     // 한 번도 안 찍었으면 인정받을 세션 자체가 없다.
@@ -1092,26 +1092,33 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:#fff;color:var(--t
 
 /* ── 출석현황 세로 타임라인(관리자 화면 .tl-* 디자인을 세로로 변형) ── */
 .ck-table{display:flex;flex-direction:column;gap:6px;}
-/* 출석현황 — 세션당 한 행: [찍은시각] - N세션 - [찍은시각].
-   양옆 칸은 각각 그 세션의 앞/뒤 스캔 지점이고, 가운데가 세션이다.
-   찍힌 칸은 QR 스캔 버튼(.qr-scan-btn)과 같은 연보라 배경/테두리로 칠해
-   "이건 내가 찍은 것"이 같은 색 언어로 읽히게 한다. */
-/* 왼쪽=찍은 시각(한 줄), 오른쪽=세션. 세션 칸은 폭을 고정해 행끼리 세로로 줄을 맞춘다. */
-.ck-row{display:grid;grid-template-columns:1fr 10px 134px;align-items:stretch;gap:5px;}
-.ck-cell{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:7px;padding:9px 8px;min-width:0;border-radius:14px;border:1.5px solid var(--border);background:#fafafc;}
-.ck-cell.done{background:var(--brand-xlight);border-color:#bcaef0;}
-.ck-cam{font-size:18px;line-height:1;flex-shrink:0;filter:grayscale(1);opacity:.4;}
-.ck-cell.done .ck-cam{filter:none;opacity:1;}
-.ck-time{font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap;}
-.ck-cell.done .ck-time{color:var(--brand);}
-.ck-dash{display:flex;align-items:center;justify-content:center;color:var(--border);font-size:12px;font-weight:800;}
-.ck-period{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:800;color:var(--muted);background:#fafafc;border:1.5px solid var(--border);border-radius:14px;padding:9px 6px;}
-/* 뒤 지점까지 찍어 이수된 세션만 색을 채운다 — 어디까지 인정됐는지 한눈에 보이도록. */
-.ck-period.done{background:var(--brand-xlight);border-color:#bcaef0;color:var(--brand);}
-/* 마지막 줄이 세션이 아니라 '교육 종료'일 때 — 끝났다는 게 한눈에 보이도록 붉게 채운다. */
-.ck-period.ck-end{background:#b91c1c;border-color:#b91c1c;color:#fff;font-size:14px;}
+/* 출석현황 — [세션 | 시작 | 종료] 표. 세션 사이에 찍는 QR 한 번은 앞 세션의 '종료'이자 다음 세션의 '시작'이라
+   두 칸에 같은 시각이 들어간다 — "다음 세션 시작도 이미 찍었구나"가 읽히게 하려는 것이다.
+   찍힌 칸은 QR 스캔 버튼(.qr-scan-btn)과 같은 연보라, 안 찍은 칸은 붉게, 아직 안 온 칸은 회색 점선. */
+.ck-head,.ck-row{display:grid;grid-template-columns:84px 1fr 1fr;gap:6px;align-items:stretch;}
+.ck-head span{text-align:center;font-size:12px;font-weight:800;color:var(--muted);padding-bottom:2px;}
+.ck-session{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:14px;font-weight:800;color:var(--muted);background:#fafafc;border:1.5px solid var(--border);border-radius:14px;padding:8px 4px;}
+/* 종료까지 찍어 이수된 세션만 색을 채운다 — 어디까지 인정됐는지 한눈에 보이도록. */
+.ck-session.done{background:var(--brand-xlight);border-color:#bcaef0;color:var(--brand);}
+.ck-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:9px 6px;min-width:0;border-radius:14px;border:1.5px solid var(--border);background:#fafafc;color:var(--muted);font-size:15px;font-weight:800;white-space:nowrap;}
+.ck-cell.done{background:var(--brand-xlight);border-color:#bcaef0;color:var(--brand);}
+.ck-cell.miss{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
+.ck-cell.wait{border-style:dashed;font-weight:700;}
+.ck-cell.left{background:#b91c1c;border-color:#b91c1c;color:#fff;}
+.ck-sub{font-size:10px;font-weight:700;opacity:.8;}
+/* 마지막 줄 — 교육이 끝났다는 걸 붉게 채워 보여준다. */
+.ck-final{text-align:center;background:#b91c1c;color:#fff;border-radius:14px;padding:10px;font-size:14px;font-weight:800;}
+.ck-note{font-size:12px;line-height:1.5;color:var(--muted);margin-top:2px;}
 /* 이수완료는 붉은 도장처럼 — 살짝 기울여 찍은 느낌을 준다. */
 .ck-stamp{color:#dc2626;border:2px solid #dc2626;border-radius:5px;padding:1px 4px;font-size:10px;font-weight:900;letter-spacing:.5px;line-height:1.25;white-space:nowrap;transform:rotate(-7deg);}
+
+/* 서명 박스 — 서명이 끝나면 서명 위에 둥근 '서명완료' 도장, 아직이면 점선 도장('미서명')으로 상태가 보이게 한다. */
+.sig-preview-body{position:relative;}
+.sig-stamp{position:absolute;right:10px;top:50%;width:46px;height:46px;margin-top:-23px;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;font-weight:900;line-height:1.15;transform:rotate(-12deg);pointer-events:none;}
+.sig-stamp.done{color:#dc2626;border:2.5px solid #dc2626;background:rgba(255,255,255,.55);box-shadow:inset 0 0 0 2px rgba(220,38,38,.18);}
+.sig-stamp.todo{color:#9ca3af;border:2px dashed #cbd5e1;}
+/* 시작 서명은 했는데 종료 서명을 아직 안 한 상태 — 붉은 점선으로 "아직 남았다"를 알린다. */
+.sig-stamp.todo.alert{color:#dc2626;border-color:#f87171;}
 
 .schedule-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--subtle);}
 .schedule-row:last-child{border-bottom:none;}
