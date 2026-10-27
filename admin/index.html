@@ -1268,6 +1268,31 @@
   let docGenSessionLabel = '';
   let docGenSessionDate = ''; // 세션 실제 날짜(YYYY-MM-DD) — 문서생성 연도 계산용
   let docGenCheckinMap = {}; // studentId -> { period: time } — 문서생성 시 세션별 체크인 시간
+  let docGenCheckinMs = {};  // studentId -> [찍은 시각(ms)…] — 평점 계산용(처음·마지막 QR)
+  let docGenCourses = [];    // 그날 시간표 줄들 [{time:'09:00~09:30', title, …}]
+
+  // 평점 = 처음 찍은 QR부터 마지막 QR까지 중 시간표의 강의 시간(휴식·식사 제외)을 더한 분에 5분 여유를 더해
+  // 60분 단위로 내림, 하루 최대 5점. 중간 QR을 안 찍었어도 처음·마지막만 있으면 계산한다.
+  // (학생 화면의 점수 기준과 같은 규칙. 시간표가 없으면 null — 문서에는 빈 칸으로 둔다.)
+  const DOC_BREAK_RE = /휴식|식사|점심|중식|쉬는|브레이크|break/i;
+  function docGenPoints(studentId) {
+    if (!docGenSessionDate) return null;
+    const lectures = docGenCourses.map((c) => {
+      const m = String(c.time || '').match(/(\d{1,2})\s*:\s*(\d{2})\s*[~\-–]\s*(\d{1,2})\s*:\s*(\d{2})/);
+      if (!m || DOC_BREAK_RE.test(c.title || '')) return null;
+      const at = (h, mi) => Date.parse(`${docGenSessionDate}T${String(h).padStart(2, '0')}:${mi}:00+09:00`);
+      const st = at(m[1], m[2]), en = at(m[3], m[4]);
+      return en > st ? [st, en] : null;
+    }).filter(Boolean);
+    if (!lectures.length) return null;
+    const scans = docGenCheckinMs[studentId] || [];
+    if (scans.length < 2) return 0;
+    const first = Math.min(...scans), last = Math.max(...scans);
+    let total = 0;
+    lectures.forEach(([st, en]) => { total += Math.max(0, Math.min(last, en) - Math.max(first, st)); });
+    const minutes = Math.round(total / 60000);
+    return Math.min(5, Math.floor((minutes + 5) / 60));
+  }
   let docGenLoadToken = 0; // loadSessionDetail 요청 토큰 — 응답 순서 역전 시 최신 호출만 반영
 
   window.openDocGenModal = function () {
@@ -1375,6 +1400,11 @@
 
       const extraSnaps = await Promise.all(selected.map(s => getDoc(doc(db, 'studentExtraInfo', s.id))));
 
+      // 시간표가 없으면 평점을 계산할 수 없다 — 모르고 빈 칸으로 내보내지 않도록 한 번 묻는다.
+      if (!docGenCourses.some(c => /\d{1,2}\s*:\s*\d{2}\s*[~\-–]/.test(String(c.time || '')))) {
+        if (!confirm('이 날짜의 시간표가 없어 평점을 계산할 수 없습니다.\n평점 칸을 비워 두고 문서를 만들까요?')) return;
+      }
+
       // 템플릿에는 학생 15명분 블록(각 3행)이 미리 만들어져 있음. 15명 초과 시 마지막 블록을 복제해서 틀/서식을 그대로 확장
       const existingBlocks = 15;
       const totalBlocks = selected.length;
@@ -1410,6 +1440,51 @@
         }
       }
 
+      // 7·8·9번째 QR 칸(J·K열)은 없애고 그 자리를 '평점' 열로 쓴다: 머리글 F3:K3을 F3:I3(QR 체크 기록)과
+      // J3:K3(평점)으로 나누고, 학생 블록(3행)마다 J:K를 하나로 합친다.
+      {
+        const mergeCellsEl2 = xdoc.getElementsByTagNameNS(XLSX_NS, 'mergeCells')[0];
+        function clearCell(r, c) {
+          const cellEl = getCell(r, c);
+          if (!cellEl) return;
+          Array.from(cellEl.childNodes).forEach(n => cellEl.removeChild(n));
+          cellEl.removeAttribute('t');
+        }
+        if (mergeCellsEl2) {
+          let added = 0;
+          const addMerge = (ref) => {
+            const mc = xdoc.createElementNS(XLSX_NS, 'mergeCell');
+            mc.setAttribute('ref', ref);
+            mergeCellsEl2.appendChild(mc);
+            added++;
+          };
+          Array.from(mergeCellsEl2.getElementsByTagNameNS(XLSX_NS, 'mergeCell')).forEach(mc => {
+            if (mc.getAttribute('ref') === 'F3:K3') mc.setAttribute('ref', 'F3:I3');
+          });
+          addMerge('J3:K3');
+          const blockTotal = Math.max(existingBlocks, totalBlocks);
+          for (let b = 0; b < blockTotal; b++) addMerge(cellAddr(3 + 3 * b, 9) + ':' + cellAddr(3 + 3 * b + 2, 10));
+          mergeCellsEl2.setAttribute('count', String(parseInt(mergeCellsEl2.getAttribute('count'), 10) + added));
+        }
+        setCellValue(2, 9, '평점');
+        const j3 = getCell(2, 9);
+        if (j3) j3.setAttribute('s', '6');   // 'QR 체크 기록' 머리글과 같은 서식
+        const blockTotal2 = Math.max(existingBlocks, totalBlocks);
+        for (let b = 0; b < blockTotal2; b++) {
+          for (let sub = 0; sub < 3; sub++) { clearCell(3 + 3 * b + sub, 9); clearCell(3 + 3 * b + sub, 10); }
+        }
+      }
+      function setCellNumber(r, c, n) {
+        const cellEl = getCell(r, c);
+        if (!cellEl) return false;
+        Array.from(cellEl.childNodes).forEach(x => cellEl.removeChild(x));
+        cellEl.removeAttribute('t');
+        const v = xdoc.createElementNS(XLSX_NS, 'v');
+        v.textContent = String(n);
+        cellEl.appendChild(v);
+        return true;
+      }
+
       // 서명 이미지 삽입 준비 — startSignature/endSignature(base64 PNG, data: 접두사 없음)가
       // 있는 학생만 해당 블록의 서명(시작 전)/서명(종료 후) 병합 셀(E열=4/L열=11, 0-based)에
       // 이미지로 넣는다. 템플릿의 drawing1.xml은 빈 골격만 있어([Content_Types].xml에 png
@@ -1429,12 +1504,15 @@
         setCellValue(blockFirstRow, 3, extra['근무처명'] || '');
 
         const times = (docGenCheckinMap && docGenCheckinMap[s.id]) || {};
-        for (let p = 1; p <= 9; p++) {
+        for (let p = 1; p <= 6; p++) {   // 7~9번째 칸은 평점 열로 바뀌었다
           if (!times[p]) continue;
           const subRow = (p - 1) % 3;
           const periodCol = 5 + 2 * Math.floor((p - 1) / 3);
           setCellValue(blockFirstRow + subRow, periodCol + 1, times[p]);
         }
+
+        const pts = docGenPoints(s.id);
+        if (pts != null) setCellNumber(blockFirstRow, 9, pts);
 
         ['start', 'end'].forEach(kind => {
           const sig = kind === 'start' ? s.startSignature : s.endSignature;
@@ -1570,9 +1648,11 @@
       docGenSessionDate = date;
 
       const map = {};
+      const msMap = {};
       checkinsSnap.forEach(d => {
         const c = d.data();
         if (!map[c.kakaoId]) map[c.kakaoId] = {};
+        if (c.checkedAt && c.checkedAt.toDate) (msMap[c.kakaoId] = msMap[c.kakaoId] || []).push(c.checkedAt.toDate().getTime());
         let t = '';
         if (c.checkedAt && c.checkedAt.toDate) {
           t = c.checkedAt.toDate().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' });
@@ -1581,6 +1661,11 @@
         map[c.kakaoId][c.period] = t;
       });
       docGenCheckinMap = map;
+      docGenCheckinMs = msMap;
+      try {
+        const schedSnap = await getDoc(doc(db, 'schedule', `${ORG_ID}_${date}`));
+        docGenCourses = schedSnap.exists() ? (schedSnap.data().courses || []) : [];
+      } catch (e) { docGenCourses = []; }
 
       const signed = docGenStudents.filter(s => s.startSignature || s.endSignature).length;
       picked.innerHTML = docGenStudents.length
