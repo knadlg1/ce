@@ -927,7 +927,8 @@
   }
 
   // ── 인정 점수 ──
-  // 시간표의 강의 줄(휴식·식사 제외) 중, 학생이 앞뒤 QR을 모두 찍은 세션 구간 안에 든 시간만 더한다.
+  // 처음 찍은 QR부터 마지막 QR까지 중 시간표의 강의 줄(휴식·식사 제외)에 든 시간을 더한다. 중간 QR을
+  // 안 찍었어도 처음·마지막만 있으면 계산한다(관리자 문서의 평점과 같은 규칙).
   // 점수 = (분 + 5분 여유)를 60분으로 내린 값, 하루 최대 5점. 예) 1:55→2점, 1:54→1점, 2:55→3점.
   let scheduleRows = [];
   let scheduleDate = null;   // 'YYYY-MM-DD'(KST)
@@ -945,15 +946,11 @@
     }).filter(Boolean) : [];
     if (!lectures.length) { wrap.hidden = true; return; }   // 시간표가 없으면 계산할 수 없다
     const ms = (c) => (c.checkedAt && typeof c.checkedAt.toDate === 'function' ? c.checkedAt.toDate() : new Date(c.checkedAt)).getTime();
-    const byP = {};
-    checkins.forEach((c) => { byP[c.period] = c; });
-    const maxP = checkins.length ? Math.max(...checkins.map(c => c.period)) : 0;
+    const scans = checkins.map(ms).filter(n => !isNaN(n));
     let total = 0;
-    for (let p = 1; p < maxP; p++) {
-      if (!byP[p] || !byP[p + 1]) continue;   // 실제로 앞뒤를 둘 다 찍은 세션만(채워 보이는 칸은 제외)
-      const a = ms(byP[p]), b = ms(byP[p + 1]);
-      if (!(b > a)) continue;
-      lectures.forEach(([st, en]) => { total += Math.max(0, Math.min(b, en) - Math.max(a, st)); });
+    if (scans.length >= 2) {
+      const first = Math.min(...scans), last = Math.max(...scans);
+      lectures.forEach(([st, en]) => { total += Math.max(0, Math.min(last, en) - Math.max(first, st)); });
     }
     const minutes = Math.round(total / 60000);
     const points = Math.min(5, Math.floor((minutes + 5) / 60));
