@@ -70,6 +70,7 @@
   let lastTokenChangeAt = 0;     // 어느 컴퓨터가 갱신했든 QR 토큰이 마지막으로 바뀐 시각
   let syncReloading = false;
   let makeupRequestsUnsub = null;
+  let signLinksUnsub = null;
   let periodCountsUnsub = null;
 
   function todayKST() {
@@ -115,6 +116,7 @@
     if (periodCountsUnsub) { periodCountsUnsub(); periodCountsUnsub = null; }
     if (sessionUnsub) { sessionUnsub(); sessionUnsub = null; }
     if (makeupRequestsUnsub) { makeupRequestsUnsub(); makeupRequestsUnsub = null; }
+    if (signLinksUnsub) { signLinksUnsub(); signLinksUnsub = null; }
     stopRosterPoll();
     await auth.signOut();
     ORG_ID = null;
@@ -149,6 +151,7 @@
     startPeriodCountsListener();
     startRosterPoll();
     loadAllOrgStudents(); // 출석 서명요청용 학생 선택 목록 — 로그인당 1회면 충분
+    startSignLinksListener();
     // 시간표는 세션 상태와 무관하게 orgId+오늘 날짜만으로 정해지므로 대시보드 진입 시
     // 스크래핑을 백그라운드로 돌려 대시보드 렌더를 막지 않는다(화면 표시는 학생 웹 전용).
     refreshTodaySchedule(false);
@@ -925,6 +928,119 @@
     } catch (e) { alert('처리 실패: ' + e.message); }
   };
 
+  // ── 개별 서명 링크 ──
+  // 한 사람 전용 일회용 링크. 이미 가입해 그날 QR을 한 번이라도 찍은 분은 날짜를 고르면 뜨는
+  // 명단에서 고르고, 처음 가입하는 분(명단에 없음)은 '신규가입'에서 이름·휴대폰번호·면허번호를
+  // 직접 적는다. 학생이 링크에서 같은 휴대폰번호를 입력해야 바로 서명할 수 있다(문자인증 없음).
+  let slMode = 'existing';   // 'existing' | 'new'
+  let slRoster = [];         // 고른 날짜에 QR을 찍은 사람들
+
+  function signLinkUrl(token) {
+    return new URL('../?sign=' + token, window.location.href).href;
+  }
+
+  window.updateSignLinkBtn = function () {
+    const v = (id) => document.getElementById(id).value.trim();
+    const ok = slMode === 'new'
+      ? v('sl-date') && v('sl-name') && v('sl-phone') && v('sl-license')
+      : v('sl-date') && v('sl-pick');
+    document.getElementById('sl-make-btn').disabled = !ok;
+  };
+
+  window.setSignLinkMode = function (mode) {
+    slMode = mode;
+    document.getElementById('sl-existing').style.display = mode === 'existing' ? 'flex' : 'none';
+    document.getElementById('sl-new').style.display = mode === 'new' ? 'flex' : 'none';
+    updateSignLinkBtn();
+  };
+
+  // 날짜를 고르면 그날 명단(QR을 한 번이라도 찍은 사람)을 불러온다. 서명 없는 분을 위에 둔다.
+  window.onSignLinkDate = async function () {
+    const date = document.getElementById('sl-date').value;
+    const sel = document.getElementById('sl-pick');
+    slRoster = [];
+    sel.innerHTML = '<option value="">' + (date ? '불러오는 중...' : '날짜를 먼저 고르세요') + '</option>';
+    updateSignLinkBtn();
+    if (!date) return;
+    try {
+      const snap = await getDocs(collection(db, 'sessions', `${ORG_ID}_${date}`, 'roster'));
+      if (document.getElementById('sl-date').value !== date) return;   // 그새 날짜를 바꿨다
+      const unsigned = (p) => !(p.startSignature && p.endSignature);
+      slRoster = snap.docs.map(d => ({ kakaoId: d.id, ...d.data() }))
+        .sort((a, b) => (unsigned(b) - unsigned(a)) || String(a.name || '').localeCompare(String(b.name || ''), 'ko'));
+      sel.innerHTML = slRoster.length
+        ? '<option value="">사람 선택</option>' + slRoster.map(p =>
+            `<option value="${escapeHtml(p.kakaoId)}">${escapeHtml(p.name || p.kakaoId)} (${escapeHtml(last4Phone(p.phone))})${unsigned(p) ? ' · 서명 없음' : ''}</option>`).join('')
+        : '<option value="">그날 QR을 찍은 분이 없습니다</option>';
+    } catch (e) {
+      sel.innerHTML = '<option value="">명단 조회 실패</option>';
+    }
+    updateSignLinkBtn();
+  };
+
+  window.copySignLink = async function (token) {
+    const url = signLinkUrl(token);
+    try {
+      await navigator.clipboard.writeText(url);
+      alert('링크를 복사했습니다.');
+    } catch (e) {
+      window.prompt('링크를 복사하세요.', url);
+    }
+  };
+
+  window.createSignLink = async function () {
+    const date = document.getElementById('sl-date').value;
+    let name, phone, license = '', kakaoId = '';
+    if (slMode === 'new') {
+      name = document.getElementById('sl-name').value.trim();
+      phone = document.getElementById('sl-phone').value.replace(/\D/g, '');
+      license = document.getElementById('sl-license').value.trim();
+      if (!date || !name || !phone || !license) { alert('날짜, 이름, 휴대폰번호, 면허번호를 모두 입력해주세요.'); return; }
+    } else {
+      const p = slRoster.find(x => x.kakaoId === document.getElementById('sl-pick').value);
+      if (!date || !p) { alert('날짜와 사람을 선택해주세요.'); return; }
+      name = p.name || '';
+      phone = String(p.phone || '').replace(/\D/g, '');
+      kakaoId = p.kakaoId;
+      if (!phone) { alert('이 분은 휴대폰번호가 없어 링크를 만들 수 없습니다.'); return; }
+    }
+    const sid = `${ORG_ID}_${date}`;
+    try {
+      const sess = await getDoc(doc(db, 'sessions', sid));
+      if (!sess.exists()) { alert(date + ' 날짜의 교육 기록이 없습니다. 날짜를 확인해주세요.'); return; }
+      const token = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+      await setDoc(doc(db, 'signLinks', token), {
+        orgId: ORG_ID, orgName, sessionId: sid, date, name, phone,
+        ...(license ? { license } : {}), ...(kakaoId ? { kakaoId } : {}),
+        status: 'pending', createdAt: serverTimestamp(),
+      });
+      if (slMode === 'new') ['sl-name', 'sl-phone', 'sl-license'].forEach(id => { document.getElementById(id).value = ''; });
+      else document.getElementById('sl-pick').value = '';
+      updateSignLinkBtn();
+      await copySignLink(token);
+    } catch (e) { alert('링크 생성 실패: ' + e.message); }
+  };
+
+  function renderSignLinks(list) {
+    const el = document.getElementById('sl-list');
+    if (!el) return;
+    if (!list.length) { el.innerHTML = '<div class="hist-empty">만든 링크가 없습니다.</div>'; return; }
+    list.sort((a, b) => ((b.createdAt && b.createdAt.seconds) || 0) - ((a.createdAt && a.createdAt.seconds) || 0));
+    el.innerHTML = list.map(l => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+        <span style="flex:1;font-size:13px;">${escapeHtml(l.date)} · ${escapeHtml(l.name)} (${escapeHtml(String(l.phone).slice(-4))}) · ${l.kakaoId ? '가입자 · ' : '신규 · '}${l.status === 'done' ? '서명 완료' : '대기중'}</span>
+        ${l.status === 'done' ? '' : `<button class="btn-primary" style="padding:6px 16px;font-size:12px;" onclick="copySignLink('${l.id}')">링크 복사</button>`}
+      </div>
+    `).join('');
+  }
+
+  function startSignLinksListener() {
+    if (signLinksUnsub) { signLinksUnsub(); signLinksUnsub = null; }
+    signLinksUnsub = onSnapshot(query(collection(db, 'signLinks'), where('orgId', '==', ORG_ID)), (snap) => {
+      renderSignLinks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+  }
+
   function startRotateLoop() {
     clearRotateInterval();
     countdownSec = QR_ROTATE_SEC;
@@ -1163,7 +1279,7 @@
     // 조퇴자는 미체크에서 뺀다 — 이미 나간 사람인데 '아직 안 찍은 사람'에 섞이면
     // 관리자가 기다리거나 찾아다니게 된다.
     const left = rosterAll.filter(p => p.earlyLeaveAt);
-    const staying = rosterAll.filter(p => !p.earlyLeaveAt);
+    const staying = rosterAll.filter(p => !p.earlyLeaveAt && !p.linkSigned);
     const done = staying.filter(p => checkedIdsThisPeriod.has(String(p.kakaoId)));
     const absent = staying.filter(p => !checkedIdsThisPeriod.has(String(p.kakaoId)));
     const total = staying.length;
@@ -2416,6 +2532,29 @@ body{font-family:'Pretendard',system-ui,sans-serif;background:var(--canvas);colo
       <div id="makeup-requests-list">
         <div class="hist-empty">기능 준비 중입니다.</div>
       </div>
+    </div>
+
+    <!-- 개별 서명 링크 — 한 사람 전용 일회용 링크. 이미 가입한 분은 그날 QR 명단에서 고르고, 신규가입은 직접 입력. -->
+    <div class="hist-detail-card" style="max-width:900px;margin:24px auto 0;">
+      <div style="font-size:18px;font-weight:800;color:var(--brand);margin-bottom:8px;">개별 서명 링크</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;">서명하지 못한 분께 보낼 개인용 링크입니다. 날짜를 고르면 그날 QR을 찍은 분이 뜨고, 명단에 없는 처음 가입하는 분은 '신규가입'으로 직접 입력합니다.</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+        <input type="date" id="sl-date" class="auth-input" oninput="onSignLinkDate()" style="margin:0;width:auto;">
+        <div id="sl-existing" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <select id="sl-pick" class="auth-input" onchange="updateSignLinkBtn()" style="margin:0;width:auto;min-width:220px;">
+            <option value="">날짜를 먼저 고르세요</option>
+          </select>
+          <button class="btn-primary" style="background:var(--muted);padding:12px 20px;" onclick="setSignLinkMode('new')">신규가입</button>
+        </div>
+        <div id="sl-new" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;">
+          <input type="text" id="sl-name" class="auth-input" placeholder="이름" oninput="updateSignLinkBtn()" style="margin:0;width:110px;">
+          <input type="tel" id="sl-phone" class="auth-input" placeholder="휴대폰번호" oninput="updateSignLinkBtn()" style="margin:0;width:150px;">
+          <input type="text" id="sl-license" class="auth-input" placeholder="면허번호" oninput="updateSignLinkBtn()" style="margin:0;width:120px;">
+          <button class="btn-primary" style="background:var(--muted);padding:12px 20px;" onclick="setSignLinkMode('existing')">목록에서 선택</button>
+        </div>
+        <button class="btn-primary" id="sl-make-btn" onclick="createSignLink()" disabled>링크 만들기</button>
+      </div>
+      <div id="sl-list"><div class="hist-empty">불러오는 중...</div></div>
     </div>
 
     <!-- 문서 자동생성 — [출석 데이터] + [명단 파일] = [최종본] 합성 형태.
